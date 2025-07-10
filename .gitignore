@@ -1,3 +1,4 @@
+# Ignore all files with .env extension
 *.env
 
 # OpenSearch data and logs

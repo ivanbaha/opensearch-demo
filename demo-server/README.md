@@ -1,106 +1,243 @@
-# OpenSearch Demo API
+# OpenSearch Demo Application
 
-This project demonstrates how to interact with OpenSearch using a .NET web API.
+A .NET 9 minimal API application demonstrating OpenSearch and MongoDB integration with a clean, maintainable architecture using controllers and services.
 
-## Prerequisites
+## Architecture
 
-- .NET 9.0 or later
-- Docker and Docker Compose (for running OpenSearch)
+The application follows a clean architecture pattern with:
 
-## Setup
+- **Controllers**: Handle HTTP requests and responses
+- **Services**: Business logic and data access
+- **Models**: Data structures and DTOs
+- **Configuration**: Application settings and dependency injection
 
-1. Start OpenSearch using Docker Compose:
+### Project Structure
+
+```
+demo-server/
+├── Controllers/
+│   ├── HealthController.cs       # Health checks
+│   ├── MongoDbController.cs      # MongoDB operations
+│   ├── OpenSearchController.cs   # OpenSearch operations
+│   └── PapersController.cs       # Papers sync and search
+├── Services/
+│   ├── IHealthService.cs         # Health service interface
+│   ├── HealthService.cs          # Health service implementation
+│   ├── IMongoDbService.cs        # MongoDB service interface
+│   ├── MongoDbService.cs         # MongoDB service implementation
+│   ├── IOpenSearchService.cs     # OpenSearch service interface
+│   ├── OpenSearchService.cs      # OpenSearch service implementation
+│   ├── IPapersService.cs         # Papers service interface
+│   └── PapersService.cs          # Papers service implementation
+├── Program.cs                    # Application entry point
+├── appsettings.json             # Development configuration
+└── appsettings.Production.json  # Production configuration
+```
+
+## Features
+
+- **OpenSearch Integration**: Full-text search capabilities
+- **MongoDB Integration**: Document database operations
+- **Health Monitoring**: Service availability checks
+- **Data Synchronization**: MongoDB to OpenSearch sync
+- **Advanced Search**: Multi-field search with filters and sorting
+- **Swagger Documentation**: API documentation and testing
+- **Logging**: Comprehensive logging throughout the application
+- **Error Handling**: Robust error handling and responses
+
+## API Endpoints
+
+### Health Check
+
+- **GET** `/api/health` - Check the health status of OpenSearch and MongoDB services
+
+### OpenSearch Demo
+
+- **POST** `/api/opensearch/demo` - Demonstrate OpenSearch indexing and searching
+
+### MongoDB Operations
+
+- **POST** `/api/mongodb/check` - List available MongoDB collections
+
+### Papers Management
+
+- **POST** `/api/papers/sync` - Sync papers data from MongoDB to OpenSearch (up to 100k documents)
+- **GET** `/api/papers/search` - Search papers with advanced filtering and sorting
+
+#### Search Parameters
+
+- `query`: Full-text search query
+- `author`: Filter by author name
+- `journal`: Filter by journal name
+- `fromDate`: Filter by publication date (from)
+- `toDate`: Filter by publication date (to)
+- `topics`: Filter by topics (comma-separated)
+- `sortBy`: Sort results (`hotscore`, `pagerank`, `date`, or relevance)
+- `from`: Pagination offset (default: 0)
+- `size`: Number of results per page (default: 10)
+
+## Configuration
+
+### MongoDB Configuration
+
+```json
+{
+  "MongoDB": {
+    "ConnectionString": "mongodb://localhost:27017",
+    "DatabaseName": "your_database_name"
+  }
+}
+```
+
+### OpenSearch Configuration
+
+```json
+{
+  "OpenSearch": {
+    "Url": "https://localhost:9200",
+    "Username": "admin",
+    "Password": "admin",
+    "TrustSelfSignedCertificate": "true"
+  }
+}
+```
+
+## Development
+
+### Prerequisites
+
+- .NET 9 SDK
+- MongoDB instance
+- OpenSearch instance
+- Docker (optional, for containerized services)
+
+### Running the Application
+
+1. **Configure Services**: Update `appsettings.json` with your MongoDB and OpenSearch connection details
+
+2. **Start Dependencies**:
 
    ```bash
    docker-compose up -d
    ```
 
-2. Build and run the API server:
+3. **Run the Application**:
 
    ```bash
-   cd demo-server
    dotnet run
    ```
 
-3. The server will start on `https://localhost:5001` (or the port shown in the console output)
+4. **Access Swagger UI**: Navigate to `https://localhost:5001/swagger`
 
-## API Endpoints
-
-### POST /api/demo
-
-Demonstrates basic OpenSearch operations:
-
-- Creates a sample document in the "demo-index" index
-- Searches for documents containing "test"
-
-**Example request:**
+### Building the Project
 
 ```bash
-curl -X POST https://localhost:5001/api/demo \
-     -H "Content-Type: application/json" \
-     -k
+dotnet build
 ```
 
-**Example response:**
+### Running Tests
 
-```json
-{
-  "indexResponse": {
-    "_index": "demo-index",
-    "_id": "...",
-    "_version": 1,
-    "result": "created",
-    "_shards": {
-      "total": 2,
-      "successful": 1,
-      "failed": 0
-    }
-  },
-  "searchResponse": {
-    "took": 5,
-    "timed_out": false,
-    "_shards": {
-      "total": 1,
-      "successful": 1,
-      "skipped": 0,
-      "failed": 0
-    },
-    "hits": {
-      "total": {
-        "value": 1,
-        "relation": "eq"
-      },
-      "max_score": 0.2876821,
-      "hits": [
-        {
-          "_index": "demo-index",
-          "_id": "...",
-          "_score": 0.2876821,
-          "_source": {
-            "title": "Hello OpenSearch",
-            "content": "This is a test document."
-          }
-        }
-      ]
-    }
-  }
-}
+```bash
+dotnet test
 ```
 
-## Swagger Documentation
+## Docker Support
 
-When running in development mode, you can access the Swagger UI at:
-`https://localhost:5001/swagger`
+The application includes Docker Compose configuration for easy development:
 
-## Configuration
+```bash
+# Start all services
+docker-compose up -d
 
-The application uses `appsettings.json` for configuration. Key settings:
+# Stop all services
+docker-compose down
 
-- `OpenSearch.Url`: OpenSearch server URL
-- `OpenSearch.Username`: Authentication username
-- `OpenSearch.Password`: Authentication password
-- `OpenSearch.TrustSelfSignedCertificate`: Whether to trust self-signed certificates
+# View logs
+docker-compose logs -f
+```
 
-## OpenSearch Dashboard
+## Data Flow
 
-Access the OpenSearch Dashboard at: `http://localhost:5601`
+1. **MongoDB**: Stores raw publication data in `publicationStatistics` and `crossref_raw_data` collections
+2. **Data Sync**: The sync endpoint processes MongoDB documents and indexes them in OpenSearch
+3. **OpenSearch**: Provides fast full-text search capabilities with the processed data
+4. **Search API**: Offers advanced search with filtering, sorting, and pagination
+
+## Example API Calls
+
+### Health Check
+
+```bash
+curl -X GET https://localhost:5001/api/health -k
+```
+
+### OpenSearch Demo
+
+```bash
+curl -X POST https://localhost:5001/api/opensearch/demo -k
+```
+
+### MongoDB Check
+
+```bash
+curl -X POST https://localhost:5001/api/mongodb/check -k
+```
+
+### Sync Papers
+
+```bash
+curl -X POST https://localhost:5001/api/papers/sync -k
+```
+
+### Search Papers
+
+```bash
+# Basic search
+curl -X GET "https://localhost:5001/api/papers/search?query=machine%20learning" -k
+
+# Advanced search with filters
+curl -X GET "https://localhost:5001/api/papers/search?query=neural%20networks&journal=Nature&sortBy=hotscore&size=20" -k
+```
+
+## Error Handling
+
+The application implements comprehensive error handling:
+
+- Service-level exceptions are caught and logged
+- HTTP responses include appropriate status codes
+- Detailed error messages for debugging (development mode)
+- Graceful degradation for service unavailability
+
+## Logging
+
+The application uses structured logging with different levels:
+
+- **Information**: General application flow
+- **Warning**: Potential issues or missing data
+- **Error**: Exceptions and failures
+- **Debug**: Detailed diagnostic information
+
+## Performance Considerations
+
+- **Batch Processing**: Documents are indexed in batches of 1000 for optimal performance
+- **Async Operations**: All database operations are asynchronous
+- **Connection Pooling**: Efficient connection management for both MongoDB and OpenSearch
+- **Pagination**: Search results are paginated to prevent large response payloads
+
+## Security Notes
+
+- **Self-signed Certificates**: The application is configured to trust self-signed certificates for development
+- **Authentication**: Basic authentication is used for OpenSearch
+- **Configuration**: Sensitive settings should be stored in environment variables or secure configuration providers for production
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes following the existing architecture patterns
+4. Add tests for new functionality
+5. Submit a pull request
+
+## License
+
+This project is licensed under the MIT License.

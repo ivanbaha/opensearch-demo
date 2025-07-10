@@ -61,10 +61,15 @@ demo-server/
 
 ### Papers Management
 
-- **POST** `/api/papers/sync` - Sync papers data from MongoDB to OpenSearch (up to 100k documents)
+- **POST** `/api/papers/sync` - Sync papers data from MongoDB to OpenSearch
 - **GET** `/api/papers/search` - Search papers with advanced filtering and sorting
+- **GET** `/api/papers/list` - Get paginated list of papers with sorting options
 
-#### Search Parameters
+#### Sync Parameters (`/api/papers/sync`)
+
+- `size`: Number of papers to process (default: 1000, minimum: 1, maximum: 10000)
+
+#### Search Parameters (`/api/papers/search`)
 
 - `query`: Full-text search query
 - `author`: Filter by author name
@@ -75,6 +80,15 @@ demo-server/
 - `sortBy`: Sort results (`hotscore`, `pagerank`, `date`, or relevance)
 - `from`: Pagination offset (default: 0)
 - `size`: Number of results per page (default: 10)
+
+#### List Parameters (`/api/papers/list`)
+
+- `page`: Page number (default: 1, minimum: 1)
+- `perPage`: Results per page (default: 10, minimum: 1, maximum: 100)
+- `sort`: Sort order
+  - `latest`: Sort by publication date (newest first) - default
+  - `hot`: Sort by publication hot score (highest first)
+  - `top`: Sort by page rank (highest first)
 
 ## Configuration
 
@@ -186,7 +200,11 @@ curl -X POST https://localhost:5001/api/mongodb/check -k
 ### Sync Papers
 
 ```bash
+# Default sync (1000 papers)
 curl -X POST https://localhost:5001/api/papers/sync -k
+
+# Sync specific number of papers
+curl -X POST "https://localhost:5001/api/papers/sync?size=5000" -k
 ```
 
 ### Search Papers
@@ -197,6 +215,19 @@ curl -X GET "https://localhost:5001/api/papers/search?query=machine%20learning" 
 
 # Advanced search with filters
 curl -X GET "https://localhost:5001/api/papers/search?query=neural%20networks&journal=Nature&sortBy=hotscore&size=20" -k
+```
+
+### List Papers
+
+```bash
+# Default list (latest papers, page 1, 10 per page)
+curl -X GET "https://localhost:5001/api/papers/list" -k
+
+# Get second page with 5 papers per page, sorted by hot score
+curl -X GET "https://localhost:5001/api/papers/list?page=2&perPage=5&sort=hot" -k
+
+# Get top-ranked papers
+curl -X GET "https://localhost:5001/api/papers/list?sort=top&perPage=20" -k
 ```
 
 ## Error Handling

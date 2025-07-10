@@ -5,6 +5,6 @@ namespace OpenSearchDemo.Services
 {
     public interface IPapersService
     {
-        Task<object> SyncPapersAsync();
+        Task<object> SyncPapersAsync(int size = 1000);
     }
 }

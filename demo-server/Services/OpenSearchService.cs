@@ -411,6 +411,81 @@ namespace OpenSearchDemo.Services
             }
         }
 
+        public async Task<object> ListPapersAsync(int page = 1, int perPage = 10, string sort = "latest")
+        {
+            try
+            {
+                _logger.LogInformation("Starting papers list operation");
+
+                var indexName = "papers";
+
+                // Calculate pagination
+                var from = (page - 1) * perPage;
+                var size = perPage;
+
+                // Build search query
+                var searchQuery = new
+                {
+                    from,
+                    size,
+                    query = new
+                    {
+                        match_all = new { }
+                    },
+                    sort = new List<object>()
+                };
+
+                var sortClauses = (List<object>)searchQuery.sort;
+
+                // Add sorting based on sort parameter
+                switch (sort?.ToLower())
+                {
+                    case "hot":
+                        sortClauses.Add(new { publicationHotScore = new { order = "desc" } });
+                        break;
+                    case "top":
+                        sortClauses.Add(new { pageRank = new { order = "desc" } });
+                        break;
+                    case "latest":
+                    default:
+                        sortClauses.Add(new { publishedAt = new { order = "desc" } });
+                        break;
+                }
+
+                var searchResponse = await _client.SearchAsync<StringResponse>(indexName, PostData.Serializable(searchQuery));
+
+                if (!searchResponse.Success)
+                {
+                    throw new Exception($"List papers failed: {searchResponse.Body}");
+                }
+
+                // Parse response
+                object? searchResult = null;
+                try
+                {
+                    searchResult = JsonSerializer.Deserialize<object>(searchResponse.Body);
+                }
+                catch (JsonException ex)
+                {
+                    _logger.LogWarning(ex, "Failed to parse list papers response");
+                    searchResult = new { error = "Failed to parse response", raw = searchResponse.Body };
+                }
+
+                return new
+                {
+                    pagination = new { page, perPage, from, size },
+                    sorting = sort,
+                    result = searchResult,
+                    timestamp = DateTime.UtcNow
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during papers list operation");
+                throw;
+            }
+        }
+
         public async Task IndexDocumentsBatchAsync(string indexName, List<object> documents)
         {
             var bulkBodyLines = new List<string>();

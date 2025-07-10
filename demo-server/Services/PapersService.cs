@@ -16,21 +16,28 @@ namespace OpenSearchDemo.Services
             _logger = logger;
         }
 
-        public async Task<object> SyncPapersAsync()
+        public async Task<object> SyncPapersAsync(int size = 1000)
         {
             try
             {
-                _logger.LogInformation("Starting papers sync operation");
+                var totalStartTime = DateTime.UtcNow;
+                _logger.LogInformation("Starting papers sync operation with size limit: {Size}", size);
 
                 // Ensure the papers index exists
                 await _openSearchService.CreatePapersIndexAsync();
 
-                // Get publication statistics documents
-                var publicationStatsDocuments = await _mongoDbService.GetPublicationStatsAsync(100);
-                _logger.LogInformation("Retrieved {Count} documents from publicationStatistics", publicationStatsDocuments.Count);
+                // Get publication statistics documents with timing
+                var mongoStartTime = DateTime.UtcNow;
+                var publicationStatsDocuments = await _mongoDbService.GetPublicationStatsAsync(size);
+                var mongoEndTime = DateTime.UtcNow;
+                var mongoRetrievalTime = mongoEndTime - mongoStartTime;
+
+                _logger.LogInformation("Retrieved {Count} documents from MongoDB in {Duration}ms",
+                    publicationStatsDocuments.Count, mongoRetrievalTime.TotalMilliseconds);
 
                 var documentsToIndex = new List<object>();
                 var processedCount = 0;
+                var openSearchStartTime = DateTime.UtcNow;
 
                 foreach (var statDoc in publicationStatsDocuments)
                 {
@@ -164,13 +171,26 @@ namespace OpenSearchDemo.Services
                     await _openSearchService.IndexDocumentsBatchAsync("papers", documentsToIndex);
                 }
 
-                _logger.LogInformation("Papers sync completed. Processed {ProcessedCount} documents", processedCount);
+                var openSearchEndTime = DateTime.UtcNow;
+                var openSearchIndexingTime = openSearchEndTime - openSearchStartTime;
+                var totalEndTime = DateTime.UtcNow;
+                var totalProcessingTime = totalEndTime - totalStartTime;
+
+                _logger.LogInformation("OpenSearch indexing completed in {Duration}ms", openSearchIndexingTime.TotalMilliseconds);
+                _logger.LogInformation("Papers sync completed. Processed {ProcessedCount} documents in {TotalDuration}ms",
+                    processedCount, totalProcessingTime.TotalMilliseconds);
 
                 return new
                 {
                     message = "Papers sync completed successfully",
                     indexName = "papers",
                     documentsProcessed = processedCount,
+                    timing = new
+                    {
+                        mongoRetrievalTimeMs = mongoRetrievalTime.TotalMilliseconds,
+                        openSearchIndexingTimeMs = openSearchIndexingTime.TotalMilliseconds,
+                        totalProcessingTimeMs = totalProcessingTime.TotalMilliseconds
+                    },
                     timestamp = DateTime.UtcNow
                 };
             }

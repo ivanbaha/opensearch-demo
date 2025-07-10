@@ -36,8 +36,8 @@ services:
       - OPENSEARCH_HOSTS=https://opensearch:9200
     env_file:
       - .opensearch.env
-    volumes:
-      - ./opensearch/dashboards-config:/usr/share/opensearch-dashboards/config
+    # volumes:
+    # - ./opensearch/dashboards-config:/usr/share/opensearch-dashboards/config
     networks:
       - internal-net
     depends_on:

@@ -58,5 +58,26 @@ namespace OpenSearchDemo.Controllers
                 return Problem($"Error deleting index '{indexName}': {ex.Message}");
             }
         }
+
+        [HttpGet("index/{indexName}")]
+        public async Task<IActionResult> GetIndexInfo(string indexName)
+        {
+            try
+            {
+                // Validate index name
+                if (string.IsNullOrWhiteSpace(indexName))
+                {
+                    return BadRequest("Index name cannot be empty");
+                }
+
+                var result = await _openSearchService.GetIndexInfoAsync(indexName);
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to get index information: {IndexName}", indexName);
+                return Problem($"Error getting index information for '{indexName}': {ex.Message}");
+            }
+        }
     }
 }

@@ -55,6 +55,17 @@ demo-server/
 
 - **POST** `/api/opensearch/demo` - Demonstrate OpenSearch indexing and searching
 
+### OpenSearch Index Management
+
+- **GET** `/api/opensearch/index/{indexName}` - Get comprehensive index information including:
+  - Index mappings and field definitions
+  - Index settings (shards, replicas, refresh interval, etc.)
+  - Index statistics (document count, size, performance metrics)
+  - Detailed storage and search statistics
+- **DELETE** `/api/opensearch/index/{indexName}` - Delete an OpenSearch index by name
+  - Includes validation to prevent deletion of system indices (`.opensearch`, `.security`, `.kibana`, etc.)
+  - Returns success/failure status with detailed error messages
+
 ### MongoDB Operations
 
 - **POST** `/api/mongodb/check` - List available MongoDB collections
@@ -217,6 +228,22 @@ curl -X GET https://localhost:5001/api/health -k
 
 ```bash
 curl -X POST https://localhost:5001/api/opensearch/demo -k
+```
+
+### OpenSearch Index Management
+
+```bash
+# Get index information (metadata, settings, statistics)
+curl -X GET "https://localhost:5001/api/opensearch/index/papers" -k
+
+# Get information for a specific index
+curl -X GET "https://localhost:5001/api/opensearch/index/demo-index" -k
+
+# Delete an index (with protection against system indices)
+curl -X DELETE "https://localhost:5001/api/opensearch/index/demo-index" -k
+
+# Attempting to delete a system index (will be rejected)
+curl -X DELETE "https://localhost:5001/api/opensearch/index/.opensearch-test" -k
 ```
 
 ### MongoDB Check

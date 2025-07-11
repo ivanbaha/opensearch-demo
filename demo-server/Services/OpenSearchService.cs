@@ -615,5 +615,117 @@ namespace OpenSearchDemo.Services
                 };
             }
         }
+
+        public async Task<object> GetIndexInfoAsync(string indexName)
+        {
+            try
+            {
+                _logger.LogInformation("Getting index information for: {IndexName}", indexName);
+
+                // Check if index exists first
+                var indexExistsResponse = await _client.Indices.ExistsAsync<StringResponse>(indexName);
+
+                if (!indexExistsResponse.Success)
+                {
+                    _logger.LogWarning("Failed to check if index exists: {IndexName}", indexName);
+                    return new
+                    {
+                        success = false,
+                        message = "Failed to check if index exists",
+                        indexName,
+                        error = indexExistsResponse.Body
+                    };
+                }
+
+                // If index doesn't exist (404), return appropriate message
+                if (indexExistsResponse.HttpStatusCode == 404)
+                {
+                    _logger.LogInformation("Index does not exist: {IndexName}", indexName);
+                    return new
+                    {
+                        success = false,
+                        message = "Index does not exist",
+                        indexName
+                    };
+                }
+
+                // Get index settings and mappings
+                var getIndexResponse = await _client.Indices.GetAsync<StringResponse>(indexName);
+
+                if (!getIndexResponse.Success)
+                {
+                    _logger.LogError("Failed to get index information for {IndexName}: {Error}", indexName, getIndexResponse.Body);
+                    return new
+                    {
+                        success = false,
+                        message = "Failed to get index information",
+                        indexName,
+                        error = getIndexResponse.Body,
+                        statusCode = getIndexResponse.HttpStatusCode
+                    };
+                }
+
+                // Get index statistics
+                var statsResponse = await _client.Indices.StatsAsync<StringResponse>(indexName);
+                object? statsResponseObj = null;
+
+                if (statsResponse.Success && !string.IsNullOrEmpty(statsResponse.Body))
+                {
+                    try
+                    {
+                        statsResponseObj = JsonSerializer.Deserialize<object>(statsResponse.Body);
+                    }
+                    catch (JsonException ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to parse stats response as JSON");
+                        statsResponseObj = new { error = "Failed to parse stats response", raw = statsResponse.Body };
+                    }
+                }
+
+                _logger.LogInformation("Successfully retrieved index information for: {IndexName}", indexName);
+
+                // Parse the main index response
+                object? indexResponseObj = null;
+                try
+                {
+                    if (!string.IsNullOrEmpty(getIndexResponse.Body))
+                    {
+                        indexResponseObj = JsonSerializer.Deserialize<object>(getIndexResponse.Body);
+                    }
+                    else
+                    {
+                        indexResponseObj = new { message = "Empty response body" };
+                    }
+                }
+                catch (JsonException ex)
+                {
+                    _logger.LogWarning(ex, "Failed to parse index response as JSON");
+                    indexResponseObj = new { error = "Failed to parse index response", raw = getIndexResponse.Body };
+                }
+
+                return new
+                {
+                    success = true,
+                    message = "Index information retrieved successfully",
+                    indexName,
+                    indexInfo = indexResponseObj,
+                    statistics = statsResponseObj,
+                    statusCode = getIndexResponse.HttpStatusCode,
+                    timestamp = DateTime.UtcNow
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error while getting index information: {IndexName}", indexName);
+                return new
+                {
+                    success = false,
+                    message = "Unexpected error while getting index information",
+                    indexName,
+                    error = ex.Message,
+                    timestamp = DateTime.UtcNow
+                };
+            }
+        }
     }
 }

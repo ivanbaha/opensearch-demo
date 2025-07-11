@@ -65,6 +65,11 @@ demo-server/
 - **DELETE** `/api/opensearch/index/{indexName}` - Delete an OpenSearch index by name
   - Includes validation to prevent deletion of system indices (`.opensearch`, `.security`, `.kibana`, etc.)
   - Returns success/failure status with detailed error messages
+- **GET** `/api/opensearch/duplicates/{indexName?}` - Check for duplicate documents in an index
+  - Default index: `papers`
+  - Uses aggregation to detect documents with the same ID
+  - Returns detailed analysis of duplicates found and total document count
+  - Essential for data quality verification
 
 ### MongoDB Operations
 
@@ -72,13 +77,36 @@ demo-server/
 
 ### Papers Management
 
-- **POST** `/api/papers/sync` - Sync papers data from MongoDB to OpenSearch
+- **POST** `/api/papers/sync` - Sync papers data from MongoDB to OpenSearch with optimized bulk processing
+  - **Performance Optimized**: Uses bulk MongoDB queries instead of one-by-one document retrieval
+  - **Data Integrity**: Maintains unique DOI-based document IDs with automatic upsert handling
+  - **Batch Processing**: Processes documents in configurable batches for optimal memory usage
 - **GET** `/api/papers/search` - Search papers with advanced filtering and sorting
 - **GET** `/api/papers/list` - Get paginated list of papers with sorting options
 
 #### Sync Parameters (`/api/papers/sync`)
 
 - `size`: Number of papers to process (default: 1000, minimum: 1, maximum: 10000)
+
+#### Sync Performance Optimization
+
+The papers sync process has been optimized for maximum performance:
+
+- **Bulk Database Queries**: Retrieves all crossref documents in a single MongoDB query instead of individual lookups
+- **Reduced Database Round Trips**: Eliminates N+1 query problem for large datasets
+- **Memory Efficient**: Processes documents in configurable batches
+- **Performance Metrics**: Detailed timing breakdown in response:
+
+  ```json
+  {
+    "timing": {
+      "mongoRetrievalTimeMs": 3813.159,
+      "crossrefBulkRetrievalTimeMs": 820.491,
+      "openSearchIndexingTimeMs": 924.184,
+      "totalProcessingTimeMs": 4746.923
+    }
+  }
+  ```
 
 #### Search Parameters (`/api/papers/search`)
 
@@ -244,6 +272,12 @@ curl -X DELETE "https://localhost:5001/api/opensearch/index/demo-index" -k
 
 # Attempting to delete a system index (will be rejected)
 curl -X DELETE "https://localhost:5001/api/opensearch/index/.opensearch-test" -k
+
+# Check for duplicate documents in papers index (default)
+curl -X GET "https://localhost:5001/api/opensearch/duplicates" -k
+
+# Check for duplicates in a specific index
+curl -X GET "https://localhost:5001/api/opensearch/duplicates/papers" -k
 ```
 
 ### MongoDB Check

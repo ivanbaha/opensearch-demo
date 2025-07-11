@@ -84,5 +84,39 @@ namespace OpenSearchDemo.Services
                 return null;
             }
         }
+
+        public async Task<Dictionary<string, BsonDocument>> GetCrossrefDocumentsBulkAsync(List<string> ids)
+        {
+            try
+            {
+                _logger.LogInformation("Retrieving {Count} crossref documents in bulk", ids.Count);
+                var collection = _database.GetCollection<BsonDocument>("crossref_raw_data");
+
+                // Create filter for all requested IDs
+                var filter = Builders<BsonDocument>.Filter.In("_id", ids);
+
+                // Find all documents matching the IDs
+                var cursor = await collection.FindAsync(filter);
+                var documents = await cursor.ToListAsync();
+
+                // Create dictionary for O(1) lookup by ID
+                var result = new Dictionary<string, BsonDocument>();
+                foreach (var doc in documents)
+                {
+                    var id = doc["_id"].AsString;
+                    result[id] = doc;
+                }
+
+                _logger.LogInformation("Retrieved {Found} out of {Requested} crossref documents",
+                    result.Count, ids.Count);
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving crossref documents in bulk");
+                throw;
+            }
+        }
     }
 }

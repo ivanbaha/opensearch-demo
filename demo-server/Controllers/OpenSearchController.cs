@@ -79,5 +79,26 @@ namespace OpenSearchDemo.Controllers
                 return Problem($"Error getting index information for '{indexName}': {ex.Message}");
             }
         }
+
+        [HttpGet("duplicates/{indexName?}")]
+        public async Task<IActionResult> CheckDuplicates(string? indexName = "papers")
+        {
+            try
+            {
+                // Validate index name
+                if (string.IsNullOrWhiteSpace(indexName))
+                {
+                    indexName = "papers"; // Default to papers index
+                }
+
+                var result = await _openSearchService.CheckDuplicatesAsync(indexName);
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to check duplicates in index: {IndexName}", indexName);
+                return Problem($"Error checking duplicates in index '{indexName}': {ex.Message}");
+            }
+        }
     }
 }

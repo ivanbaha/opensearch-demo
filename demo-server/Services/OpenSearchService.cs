@@ -500,7 +500,7 @@ namespace OpenSearchDemo.Services
 
             foreach (var doc in documents)
             {
-                // Add index action line
+                // Add index action line (index operation will create or update)
                 var indexAction = new { index = new { _index = indexName, _id = ((dynamic)doc).id } };
                 bulkBodyLines.Add(JsonSerializer.Serialize(indexAction));
 
@@ -519,7 +519,54 @@ namespace OpenSearchDemo.Services
                 throw new Exception($"Bulk indexing failed: {bulkResponse.Body}");
             }
 
-            _logger.LogInformation("Indexed batch of {Count} documents", documents.Count);
+            // Parse response to get detailed information about operations
+            try
+            {
+                if (!string.IsNullOrEmpty(bulkResponse.Body))
+                {
+                    var responseObj = JsonSerializer.Deserialize<JsonElement>(bulkResponse.Body);
+                    if (responseObj.TryGetProperty("items", out var items))
+                    {
+                        var created = 0;
+                        var updated = 0;
+                        var errors = 0;
+
+                        foreach (var item in items.EnumerateArray())
+                        {
+                            if (item.TryGetProperty("index", out var indexOp))
+                            {
+                                if (indexOp.TryGetProperty("result", out var result))
+                                {
+                                    var resultValue = result.GetString();
+                                    if (resultValue == "created") created++;
+                                    else if (resultValue == "updated") updated++;
+                                }
+                                if (indexOp.TryGetProperty("error", out var error))
+                                {
+                                    errors++;
+                                    _logger.LogWarning("Indexing error: {Error}", error.ToString());
+                                }
+                            }
+                        }
+
+                        _logger.LogInformation("Bulk indexing completed: {Total} documents ({Created} created, {Updated} updated, {Errors} errors)",
+                            documents.Count, created, updated, errors);
+                    }
+                    else
+                    {
+                        _logger.LogInformation("Indexed batch of {Count} documents", documents.Count);
+                    }
+                }
+                else
+                {
+                    _logger.LogInformation("Indexed batch of {Count} documents", documents.Count);
+                }
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse bulk response, but indexing appears successful");
+                _logger.LogInformation("Indexed batch of {Count} documents", documents.Count);
+            }
         }
 
         public async Task<object> DeleteIndexAsync(string indexName)
@@ -721,6 +768,124 @@ namespace OpenSearchDemo.Services
                 {
                     success = false,
                     message = "Unexpected error while getting index information",
+                    indexName,
+                    error = ex.Message,
+                    timestamp = DateTime.UtcNow
+                };
+            }
+        }
+
+        public async Task<object> CheckDuplicatesAsync(string indexName = "papers")
+        {
+            try
+            {
+                _logger.LogInformation("Checking for duplicates in index: {IndexName}", indexName);
+
+                // Check if index exists first
+                var indexExistsResponse = await _client.Indices.ExistsAsync<StringResponse>(indexName);
+                if (!indexExistsResponse.Success || indexExistsResponse.HttpStatusCode == 404)
+                {
+                    return new
+                    {
+                        success = false,
+                        message = "Index does not exist",
+                        indexName
+                    };
+                }
+
+                // Use aggregation to find duplicate IDs
+                var duplicateQuery = @"{
+                    ""size"": 0,
+                    ""aggs"": {
+                        ""duplicate_ids"": {
+                            ""terms"": {
+                                ""field"": ""id"",
+                                ""min_doc_count"": 2,
+                                ""size"": 1000
+                            },
+                            ""aggs"": {
+                                ""document_count"": {
+                                    ""value_count"": {
+                                        ""field"": ""id""
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }";
+
+                var duplicateResponse = await _client.SearchAsync<StringResponse>(indexName, duplicateQuery);
+
+                if (!duplicateResponse.Success)
+                {
+                    _logger.LogError("Failed to check duplicates for {IndexName}: {Error}", indexName, duplicateResponse.Body);
+                    return new
+                    {
+                        success = false,
+                        message = "Failed to check for duplicates",
+                        indexName,
+                        error = duplicateResponse.Body
+                    };
+                }
+
+                // Parse the aggregation response
+                object? duplicateResult = null;
+                try
+                {
+                    if (!string.IsNullOrEmpty(duplicateResponse.Body))
+                    {
+                        duplicateResult = JsonSerializer.Deserialize<object>(duplicateResponse.Body);
+                    }
+                }
+                catch (JsonException ex)
+                {
+                    _logger.LogWarning(ex, "Failed to parse duplicate response as JSON");
+                    duplicateResult = new { error = "Failed to parse response", raw = duplicateResponse.Body };
+                }
+
+                // Get total document count for context
+                var countQuery = @"{
+                    ""size"": 0,
+                    ""query"": {
+                        ""match_all"": {}
+                    }
+                }";
+
+                var countResponse = await _client.SearchAsync<StringResponse>(indexName, countQuery);
+                object? countResult = null;
+
+                if (countResponse.Success && !string.IsNullOrEmpty(countResponse.Body))
+                {
+                    try
+                    {
+                        countResult = JsonSerializer.Deserialize<object>(countResponse.Body);
+                    }
+                    catch (JsonException ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to parse count response as JSON");
+                    }
+                }
+
+                _logger.LogInformation("Successfully checked duplicates for index: {IndexName}", indexName);
+
+                return new
+                {
+                    success = true,
+                    message = "Duplicate check completed",
+                    indexName,
+                    duplicateAnalysis = duplicateResult,
+                    totalDocumentCount = countResult,
+                    statusCode = duplicateResponse.HttpStatusCode,
+                    timestamp = DateTime.UtcNow
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error while checking duplicates in index: {IndexName}", indexName);
+                return new
+                {
+                    success = false,
+                    message = "Unexpected error while checking duplicates",
                     indexName,
                     error = ex.Message,
                     timestamp = DateTime.UtcNow

@@ -39,116 +39,37 @@ namespace OpenSearchDemo.Services
                 var processedCount = 0;
                 var openSearchStartTime = DateTime.UtcNow;
 
+                // Extract all IDs for bulk crossref lookup
+                var docIds = publicationStatsDocuments.Select(doc => doc["_id"].AsString).ToList();
+
+                _logger.LogInformation("Starting bulk retrieval of {Count} crossref documents", docIds.Count);
+                var crossrefBulkStartTime = DateTime.UtcNow;
+
+                // Get all crossref documents in bulk
+                var crossrefDocuments = await _mongoDbService.GetCrossrefDocumentsBulkAsync(docIds);
+
+                var crossrefBulkEndTime = DateTime.UtcNow;
+                var crossrefBulkTime = crossrefBulkEndTime - crossrefBulkStartTime;
+
+                _logger.LogInformation("Bulk retrieved {Found} crossref documents in {Duration}ms",
+                    crossrefDocuments.Count, crossrefBulkTime.TotalMilliseconds);
+
+                // Process all documents with bulk data
                 foreach (var statDoc in publicationStatsDocuments)
                 {
                     try
                     {
                         var docId = statDoc["_id"].AsString;
 
-                        // Get corresponding crossref document
-                        var crossrefDoc = await _mongoDbService.GetCrossrefDocumentAsync(docId);
-
-                        if (crossrefDoc == null)
+                        // Get corresponding crossref document from bulk result
+                        if (!crossrefDocuments.TryGetValue(docId, out var crossrefDoc))
                         {
                             _logger.LogWarning("No crossref document found for ID: {DocId}", docId);
                             continue;
                         }
 
-                        // Extract and map data
-                        var rawData = crossrefDoc.Contains("raw_data") ? crossrefDoc["raw_data"].AsBsonDocument : new BsonDocument();
-
-                        // Map topics from topicRelatedScores
-                        var topics = new List<object>();
-                        if (statDoc.Contains("topicRelatedScores") && statDoc["topicRelatedScores"].IsBsonArray)
-                        {
-                            foreach (var topicScore in statDoc["topicRelatedScores"].AsBsonArray)
-                            {
-                                var topicDoc = topicScore.AsBsonDocument;
-                                topics.Add(new
-                                {
-                                    name = topicDoc.Contains("name") ? topicDoc["name"].AsString : "",
-                                    relevanceScore = topicDoc.Contains("relevanceScore") && !topicDoc["relevanceScore"].IsBsonNull ? topicDoc["relevanceScore"].ToDouble() : 0.0,
-                                    topScore = topicDoc.Contains("topScore") && !topicDoc["topScore"].IsBsonNull ? topicDoc["topScore"].ToDouble() : (double?)null,
-                                    hotScore = topicDoc.Contains("hotScore") && !topicDoc["hotScore"].IsBsonNull ? topicDoc["hotScore"].ToDouble() : 0.0
-                                });
-                            }
-                        }
-
-                        // Extract publication date
-                        DateTime? publishedAt = null;
-                        if (crossrefDoc.Contains("publishedAt") && crossrefDoc["publishedAt"].IsBsonDocument)
-                        {
-                            var pubDate = crossrefDoc["publishedAt"].AsBsonDocument;
-                            var year = pubDate.Contains("year") && !pubDate["year"].IsBsonNull ? pubDate["year"].AsInt32 : 1970;
-                            var month = pubDate.Contains("month") && !pubDate["month"].IsBsonNull ? pubDate["month"].AsInt32 : 1;
-                            var day = pubDate.Contains("day") && !pubDate["day"].IsBsonNull ? pubDate["day"].AsInt32 : 1;
-                            publishedAt = new DateTime(year, month, day);
-                        }
-
-                        // Extract title
-                        var title = "";
-                        if (rawData.Contains("title") && rawData["title"].IsBsonArray)
-                        {
-                            var titleArray = rawData["title"].AsBsonArray;
-                            if (titleArray.Count > 0)
-                            {
-                                title = titleArray[0].AsString;
-                            }
-                        }
-
-                        // Extract journal
-                        var journal = "";
-                        if (rawData.Contains("container-title") && rawData["container-title"].IsBsonArray)
-                        {
-                            var journalArray = rawData["container-title"].AsBsonArray;
-                            if (journalArray.Count > 0)
-                            {
-                                journal = journalArray[0].AsString;
-                            }
-                        }
-
-                        // Extract publisher
-                        var publisher = rawData.Contains("publisher") ? rawData["publisher"].AsString : "";
-
-                        // Extract authors (if available in raw_data)
-                        var authors = "";
-                        if (rawData.Contains("author") && rawData["author"].IsBsonArray)
-                        {
-                            var authorsList = new List<string>();
-                            foreach (var author in rawData["author"].AsBsonArray)
-                            {
-                                if (author.IsBsonDocument)
-                                {
-                                    var authorDoc = author.AsBsonDocument;
-                                    var given = authorDoc.Contains("given") ? authorDoc["given"].AsString : "";
-                                    var family = authorDoc.Contains("family") ? authorDoc["family"].AsString : "";
-                                    if (!string.IsNullOrEmpty(given) || !string.IsNullOrEmpty(family))
-                                    {
-                                        authorsList.Add($"{given} {family}".Trim());
-                                    }
-                                }
-                            }
-                            authors = string.Join(", ", authorsList);
-                        }
-
-                        // Create document for OpenSearch
-                        var document = new
-                        {
-                            id = docId,
-                            title,
-                            @abstract = rawData.Contains("abstract") ? rawData["abstract"].AsString : "",
-                            journal,
-                            publisher,
-                            authors,
-                            publicationHotScore = statDoc.Contains("publicationHotScore") && !statDoc["publicationHotScore"].IsBsonNull ? statDoc["publicationHotScore"].ToDouble() : 0.0,
-                            publicationHotScore6m = 0.0, // Not available in current data structure
-                            pageRank = statDoc.Contains("pageRank") && !statDoc["pageRank"].IsBsonNull ? statDoc["pageRank"].ToDouble() : (double?)null,
-                            publishedAt,
-                            topics,
-                            createdAt = statDoc.Contains("createdAt") ? statDoc["createdAt"].ToUniversalTime() : DateTime.UtcNow,
-                            updatedAt = statDoc.Contains("updatedAt") ? statDoc["updatedAt"].ToUniversalTime() : DateTime.UtcNow
-                        };
-
+                        // Map the document using helper method
+                        var document = MapDocumentForOpenSearch(statDoc, crossrefDoc, docId);
                         documentsToIndex.Add(document);
                         processedCount++;
 
@@ -188,6 +109,7 @@ namespace OpenSearchDemo.Services
                     timing = new
                     {
                         mongoRetrievalTimeMs = mongoRetrievalTime.TotalMilliseconds,
+                        crossrefBulkRetrievalTimeMs = crossrefBulkTime.TotalMilliseconds,
                         openSearchIndexingTimeMs = openSearchIndexingTime.TotalMilliseconds,
                         totalProcessingTimeMs = totalProcessingTime.TotalMilliseconds
                     },
@@ -199,6 +121,104 @@ namespace OpenSearchDemo.Services
                 _logger.LogError(ex, "Error during papers sync operation");
                 throw;
             }
+        }
+
+        private object MapDocumentForOpenSearch(BsonDocument statDoc, BsonDocument crossrefDoc, string docId)
+        {
+            // Extract and map data
+            var rawData = crossrefDoc.Contains("raw_data") ? crossrefDoc["raw_data"].AsBsonDocument : new BsonDocument();
+
+            // Map topics from topicRelatedScores
+            var topics = new List<object>();
+            if (statDoc.Contains("topicRelatedScores") && statDoc["topicRelatedScores"].IsBsonArray)
+            {
+                foreach (var topicScore in statDoc["topicRelatedScores"].AsBsonArray)
+                {
+                    var topicDoc = topicScore.AsBsonDocument;
+                    topics.Add(new
+                    {
+                        name = topicDoc.Contains("name") ? topicDoc["name"].AsString : "",
+                        relevanceScore = topicDoc.Contains("relevanceScore") && !topicDoc["relevanceScore"].IsBsonNull ? topicDoc["relevanceScore"].ToDouble() : 0.0,
+                        topScore = topicDoc.Contains("topScore") && !topicDoc["topScore"].IsBsonNull ? topicDoc["topScore"].ToDouble() : (double?)null,
+                        hotScore = topicDoc.Contains("hotScore") && !topicDoc["hotScore"].IsBsonNull ? topicDoc["hotScore"].ToDouble() : 0.0
+                    });
+                }
+            }
+
+            // Extract publication date
+            DateTime? publishedAt = null;
+            if (crossrefDoc.Contains("publishedAt") && crossrefDoc["publishedAt"].IsBsonDocument)
+            {
+                var pubDate = crossrefDoc["publishedAt"].AsBsonDocument;
+                var year = pubDate.Contains("year") && !pubDate["year"].IsBsonNull ? pubDate["year"].AsInt32 : 1970;
+                var month = pubDate.Contains("month") && !pubDate["month"].IsBsonNull ? pubDate["month"].AsInt32 : 1;
+                var day = pubDate.Contains("day") && !pubDate["day"].IsBsonNull ? pubDate["day"].AsInt32 : 1;
+                publishedAt = new DateTime(year, month, day);
+            }
+
+            // Extract title
+            var title = "";
+            if (rawData.Contains("title") && rawData["title"].IsBsonArray)
+            {
+                var titleArray = rawData["title"].AsBsonArray;
+                if (titleArray.Count > 0)
+                {
+                    title = titleArray[0].AsString;
+                }
+            }
+
+            // Extract journal
+            var journal = "";
+            if (rawData.Contains("container-title") && rawData["container-title"].IsBsonArray)
+            {
+                var journalArray = rawData["container-title"].AsBsonArray;
+                if (journalArray.Count > 0)
+                {
+                    journal = journalArray[0].AsString;
+                }
+            }
+
+            // Extract publisher
+            var publisher = rawData.Contains("publisher") ? rawData["publisher"].AsString : "";
+
+            // Extract authors (if available in raw_data)
+            var authors = "";
+            if (rawData.Contains("author") && rawData["author"].IsBsonArray)
+            {
+                var authorsList = new List<string>();
+                foreach (var author in rawData["author"].AsBsonArray)
+                {
+                    if (author.IsBsonDocument)
+                    {
+                        var authorDoc = author.AsBsonDocument;
+                        var given = authorDoc.Contains("given") ? authorDoc["given"].AsString : "";
+                        var family = authorDoc.Contains("family") ? authorDoc["family"].AsString : "";
+                        if (!string.IsNullOrEmpty(given) || !string.IsNullOrEmpty(family))
+                        {
+                            authorsList.Add($"{given} {family}".Trim());
+                        }
+                    }
+                }
+                authors = string.Join(", ", authorsList);
+            }
+
+            // Create document for OpenSearch
+            return new
+            {
+                id = docId,
+                title,
+                @abstract = rawData.Contains("abstract") ? rawData["abstract"].AsString : "",
+                journal,
+                publisher,
+                authors,
+                publicationHotScore = statDoc.Contains("publicationHotScore") && !statDoc["publicationHotScore"].IsBsonNull ? statDoc["publicationHotScore"].ToDouble() : 0.0,
+                publicationHotScore6m = 0.0, // Not available in current data structure
+                pageRank = statDoc.Contains("pageRank") && !statDoc["pageRank"].IsBsonNull ? statDoc["pageRank"].ToDouble() : (double?)null,
+                publishedAt,
+                topics,
+                createdAt = statDoc.Contains("createdAt") ? statDoc["createdAt"].ToUniversalTime() : DateTime.UtcNow,
+                updatedAt = statDoc.Contains("updatedAt") ? statDoc["updatedAt"].ToUniversalTime() : DateTime.UtcNow
+            };
         }
     }
 }

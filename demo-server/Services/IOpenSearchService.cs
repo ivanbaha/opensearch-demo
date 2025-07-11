@@ -15,5 +15,6 @@ namespace OpenSearchDemo.Services
         Task IndexDocumentsBatchAsync(string indexName, List<object> documents);
         Task<object> DeleteIndexAsync(string indexName);
         Task<object> GetIndexInfoAsync(string indexName);
+        Task<object> CheckDuplicatesAsync(string indexName = "papers");
     }
 }

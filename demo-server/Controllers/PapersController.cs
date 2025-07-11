@@ -90,5 +90,41 @@ namespace OpenSearchDemo.Controllers
                 return Problem($"List error: {ex.Message}");
             }
         }
+
+        [HttpGet("topics/{topicName}")]
+        public async Task<IActionResult> ListPapersByTopic(
+            string topicName,
+            [FromQuery] int page = 1,
+            [FromQuery] int perPage = 10,
+            [FromQuery] string sort = "hot")
+        {
+            try
+            {
+                // Validate topic name
+                if (string.IsNullOrWhiteSpace(topicName))
+                {
+                    return BadRequest("Topic name is required");
+                }
+
+                // Validate pagination parameters
+                if (page < 1) page = 1;
+                if (perPage < 1 || perPage > 100) perPage = 10;
+
+                // Validate sort parameter - for topic-specific sorting
+                var validSorts = new[] { "hot", "top", "relevance", "latest" };
+                if (!validSorts.Contains(sort.ToLower()))
+                {
+                    sort = "hot";
+                }
+
+                var result = await _openSearchService.ListPapersByTopicAsync(topicName, page, perPage, sort);
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Papers by topic list failed for topic: {TopicName}", topicName);
+                return Problem($"List by topic error: {ex.Message}");
+            }
+        }
     }
 }

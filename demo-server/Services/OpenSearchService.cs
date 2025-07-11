@@ -278,6 +278,7 @@ namespace OpenSearchDemo.Services
                 {
                     from,
                     size,
+                    track_total_hits = true,
                     query = new
                     {
                         @bool = new
@@ -436,6 +437,7 @@ namespace OpenSearchDemo.Services
                 {
                     from,
                     size,
+                    track_total_hits = true,
                     query = new
                     {
                         match_all = new { }
@@ -490,6 +492,192 @@ namespace OpenSearchDemo.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during papers list operation");
+                throw;
+            }
+        }
+
+        public async Task<object> ListPapersByTopicAsync(string topicName, int page = 1, int perPage = 10, string sort = "hot")
+        {
+            try
+            {
+                _logger.LogInformation("Starting papers by topic list operation for topic: {TopicName}", topicName);
+
+                var indexName = "papers";
+
+                // Calculate pagination
+                var from = (page - 1) * perPage;
+                var size = perPage;
+
+                // Build search query with nested topic filter
+                var searchQuery = new
+                {
+                    from,
+                    size,
+                    track_total_hits = true,
+                    query = new
+                    {
+                        nested = new
+                        {
+                            path = "topics",
+                            query = new
+                            {
+                                term = new Dictionary<string, object>
+                                {
+                                    ["topics.name"] = topicName
+                                }
+                            },
+                            inner_hits = new
+                            {
+                                size = 1,
+                                _source = new[] { "relevanceScore", "topScore", "hotScore" }
+                            }
+                        }
+                    },
+                    sort = new List<object>()
+                };
+
+                var sortClauses = (List<object>)searchQuery.sort;
+
+                // Add sorting based on sort parameter - topic-specific scores
+                switch (sort?.ToLower())
+                {
+                    case "hot":
+                        // Sort by topic hot score using script
+                        sortClauses.Add(new
+                        {
+                            _script = new
+                            {
+                                type = "number",
+                                script = new
+                                {
+                                    source = @"
+                                        if (params._source.topics != null) {
+                                            for (topic in params._source.topics) {
+                                                if (topic.name == params.topicName) {
+                                                    return topic.hotScore != null ? topic.hotScore : 0;
+                                                }
+                                            }
+                                        }
+                                        return 0;
+                                    ",
+                                    @params = new { topicName }
+                                },
+                                order = "desc"
+                            }
+                        });
+                        break;
+                    case "top":
+                        // Sort by topic top score using script
+                        sortClauses.Add(new
+                        {
+                            _script = new
+                            {
+                                type = "number",
+                                script = new
+                                {
+                                    source = @"
+                                        if (params._source.topics != null) {
+                                            for (topic in params._source.topics) {
+                                                if (topic.name == params.topicName) {
+                                                    return topic.topScore != null ? topic.topScore : 0;
+                                                }
+                                            }
+                                        }
+                                        return 0;
+                                    ",
+                                    @params = new { topicName }
+                                },
+                                order = "desc"
+                            }
+                        });
+                        break;
+                    case "relevance":
+                        // Sort by topic relevance score using script
+                        sortClauses.Add(new
+                        {
+                            _script = new
+                            {
+                                type = "number",
+                                script = new
+                                {
+                                    source = @"
+                                        if (params._source.topics != null) {
+                                            for (topic in params._source.topics) {
+                                                if (topic.name == params.topicName) {
+                                                    return topic.relevanceScore != null ? topic.relevanceScore : 0;
+                                                }
+                                            }
+                                        }
+                                        return 0;
+                                    ",
+                                    @params = new { topicName }
+                                },
+                                order = "desc"
+                            }
+                        });
+                        break;
+                    case "latest":
+                        // Sort by publication date
+                        sortClauses.Add(new { publishedAt = new { order = "desc" } });
+                        break;
+                    default:
+                        // Default to hot score for topic-specific listing
+                        sortClauses.Add(new
+                        {
+                            _script = new
+                            {
+                                type = "number",
+                                script = new
+                                {
+                                    source = @"
+                                        if (params._source.topics != null) {
+                                            for (topic in params._source.topics) {
+                                                if (topic.name == params.topicName) {
+                                                    return topic.hotScore != null ? topic.hotScore : 0;
+                                                }
+                                            }
+                                        }
+                                        return 0;
+                                    ",
+                                    @params = new { topicName }
+                                },
+                                order = "desc"
+                            }
+                        });
+                        break;
+                }
+
+                var searchResponse = await _client.SearchAsync<StringResponse>(indexName, PostData.Serializable(searchQuery));
+
+                if (!searchResponse.Success)
+                {
+                    throw new Exception($"List papers by topic failed: {searchResponse.Body}");
+                }
+
+                // Parse response
+                object? searchResult = null;
+                try
+                {
+                    searchResult = JsonSerializer.Deserialize<object>(searchResponse.Body);
+                }
+                catch (JsonException ex)
+                {
+                    _logger.LogWarning(ex, "Failed to parse list papers by topic response");
+                    searchResult = new { error = "Failed to parse response", raw = searchResponse.Body };
+                }
+
+                return new
+                {
+                    topicName,
+                    pagination = new { page, perPage, from, size },
+                    sorting = sort,
+                    result = searchResult,
+                    timestamp = DateTime.UtcNow
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during papers by topic list operation for topic: {TopicName}", topicName);
                 throw;
             }
         }
@@ -846,6 +1034,7 @@ namespace OpenSearchDemo.Services
                 // Get total document count for context
                 var countQuery = @"{
                     ""size"": 0,
+                    ""track_total_hits"": true,
                     ""query"": {
                         ""match_all"": {}
                     }

@@ -83,6 +83,7 @@ demo-server/
   - **Batch Processing**: Processes documents in configurable batches for optimal memory usage
 - **GET** `/api/papers/search` - Search papers with advanced filtering and sorting
 - **GET** `/api/papers/list` - Get paginated list of papers with sorting options
+- **GET** `/api/papers/topics/{topicName}` - Get paginated list of papers filtered by a specific topic with topic-specific sorting
 
 #### Sync Parameters (`/api/papers/sync`)
 
@@ -128,6 +129,17 @@ The papers sync process has been optimized for maximum performance:
   - `latest`: Sort by publication date (newest first) - default
   - `hot`: Sort by publication hot score (highest first)
   - `top`: Sort by page rank (highest first)
+
+#### Topic-Specific List Parameters (`/api/papers/topics/{topicName}`)
+
+- `topicName`: **Required** - The name of the topic to filter by (e.g., "machine learning", "ensemble", "microfinance")
+- `page`: Page number (default: 1, minimum: 1)
+- `perPage`: Results per page (default: 10, minimum: 1, maximum: 100)
+- `sort`: Sort order based on topic-specific scores
+  - `hot`: Sort by topic hot score (highest first) - default
+  - `top`: Sort by topic top score (highest first)
+  - `relevance`: Sort by topic relevance score (highest first)
+  - `latest`: Sort by publication date (newest first)
 
 **Response Structure:**
 
@@ -317,6 +329,22 @@ curl -X GET "https://localhost:5001/api/papers/list?page=2&perPage=5&sort=hot" -
 
 # Get top-ranked papers
 curl -X GET "https://localhost:5001/api/papers/list?sort=top&perPage=20" -k
+```
+
+### List Papers by Topic
+
+```bash
+# Get papers for "ensemble" topic sorted by hot score (default)
+curl -X GET "https://localhost:5001/api/papers/topics/ensemble" -k
+
+# Get papers for "machine learning" topic with pagination and relevance sorting
+curl -X GET "https://localhost:5001/api/papers/topics/machine%20learning?page=2&perPage=5&sort=relevance" -k
+
+# Get latest papers for "microfinance" topic
+curl -X GET "https://localhost:5001/api/papers/topics/microfinance?sort=latest&perPage=15" -k
+
+# Get top-scored papers for a topic with URL encoding for spaces
+curl -X GET "https://localhost:5001/api/papers/topics/neural%20networks?sort=top" -k
 ```
 
 ## Error Handling

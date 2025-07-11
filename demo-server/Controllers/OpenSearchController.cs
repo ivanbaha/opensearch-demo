@@ -30,5 +30,33 @@ namespace OpenSearchDemo.Controllers
                 return Problem($"Error: {ex.Message}");
             }
         }
+
+        [HttpDelete("index/{indexName}")]
+        public async Task<IActionResult> DeleteIndex(string indexName)
+        {
+            try
+            {
+                // Validate index name
+                if (string.IsNullOrWhiteSpace(indexName))
+                {
+                    return BadRequest("Index name cannot be empty");
+                }
+
+                // Prevent deletion of critical system indices
+                var restrictedIndices = new[] { ".opensearch", ".security", ".kibana", ".opendistro" };
+                if (restrictedIndices.Any(restricted => indexName.StartsWith(restricted, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return BadRequest("Cannot delete system indices");
+                }
+
+                var result = await _openSearchService.DeleteIndexAsync(indexName);
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to delete index: {IndexName}", indexName);
+                return Problem($"Error deleting index '{indexName}': {ex.Message}");
+            }
+        }
     }
 }

@@ -90,6 +90,34 @@ demo-server/
   - `hot`: Sort by publication hot score (highest first)
   - `top`: Sort by page rank (highest first)
 
+**Response Structure:**
+
+```json
+{
+  "page": 1,
+  "perPage": 10,
+  "totalItems": 12345,
+  "totalPages": 1235,
+  "hasNextPage": true,
+  "data": [
+    {
+      "id": "paper-id",
+      "title": "Paper Title",
+      "abstract": "Paper abstract...",
+      "journal": "Journal Name",
+      "publisher": "Publisher Name",
+      "authors": "Author1, Author2",
+      "publicationHotScore": 62.5,
+      "pageRank": 0.001,
+      "publishedAt": "2025-01-01T00:00:00",
+      "topics": [...],
+      "createdAt": "2025-01-01T00:00:00Z",
+      "updatedAt": "2025-01-01T00:00:00Z"
+    }
+  ]
+}
+```
+
 ## Configuration
 
 ### MongoDB Configuration

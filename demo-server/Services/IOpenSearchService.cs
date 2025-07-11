@@ -13,5 +13,6 @@ namespace OpenSearchDemo.Services
             string? sortBy = null, int from = 0, int size = 10);
         Task<object> ListPapersAsync(int page = 1, int perPage = 10, string sort = "latest");
         Task IndexDocumentsBatchAsync(string indexName, List<object> documents);
+        Task<object> DeleteIndexAsync(string indexName);
     }
 }

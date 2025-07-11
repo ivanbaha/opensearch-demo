@@ -168,6 +168,14 @@ namespace OpenSearchDemo.Services
                 _logger.LogInformation("Creating papers index");
 
                 var indexMapping = @"{
+                    ""settings"": {
+                        ""index"": {
+                            ""max_result_window"": 1000000000,
+                            ""number_of_shards"": 10,
+                            ""number_of_replicas"": 1,
+                            ""refresh_interval"": ""60s""
+                        }
+                    },
                     ""mappings"": {
                         ""properties"": {
                             ""id"": { ""type"": ""keyword"" },
@@ -512,6 +520,100 @@ namespace OpenSearchDemo.Services
             }
 
             _logger.LogInformation("Indexed batch of {Count} documents", documents.Count);
+        }
+
+        public async Task<object> DeleteIndexAsync(string indexName)
+        {
+            try
+            {
+                _logger.LogInformation("Attempting to delete index: {IndexName}", indexName);
+
+                // Check if index exists first
+                var indexExistsResponse = await _client.Indices.ExistsAsync<StringResponse>(indexName);
+
+                if (!indexExistsResponse.Success)
+                {
+                    _logger.LogWarning("Failed to check if index exists: {IndexName}", indexName);
+                    return new
+                    {
+                        success = false,
+                        message = "Failed to check if index exists",
+                        indexName,
+                        error = indexExistsResponse.Body
+                    };
+                }
+
+                // If index doesn't exist (404), return appropriate message
+                if (indexExistsResponse.HttpStatusCode == 404)
+                {
+                    _logger.LogInformation("Index does not exist: {IndexName}", indexName);
+                    return new
+                    {
+                        success = false,
+                        message = "Index does not exist",
+                        indexName
+                    };
+                }
+
+                // Delete the index
+                var deleteResponse = await _client.Indices.DeleteAsync<StringResponse>(indexName);
+
+                if (!deleteResponse.Success)
+                {
+                    _logger.LogError("Failed to delete index {IndexName}: {Error}", indexName, deleteResponse.Body);
+                    return new
+                    {
+                        success = false,
+                        message = "Failed to delete index",
+                        indexName,
+                        error = deleteResponse.Body,
+                        statusCode = deleteResponse.HttpStatusCode
+                    };
+                }
+
+                _logger.LogInformation("Successfully deleted index: {IndexName}", indexName);
+
+                // Parse the response
+                object? deleteResponseObj = null;
+                try
+                {
+                    if (!string.IsNullOrEmpty(deleteResponse.Body))
+                    {
+                        deleteResponseObj = JsonSerializer.Deserialize<object>(deleteResponse.Body);
+                    }
+                    else
+                    {
+                        deleteResponseObj = new { message = "Empty response body" };
+                    }
+                }
+                catch (JsonException ex)
+                {
+                    _logger.LogWarning(ex, "Failed to parse delete response as JSON");
+                    deleteResponseObj = new { error = "Failed to parse delete response", raw = deleteResponse.Body };
+                }
+
+                return new
+                {
+                    success = true,
+                    message = "Index deleted successfully",
+                    indexName,
+                    response = deleteResponseObj,
+                    statusCode = deleteResponse.HttpStatusCode,
+                    timestamp = DateTime.UtcNow
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error while deleting index: {IndexName}", indexName);
+                return new
+                {
+                    success = false,
+                    message = "Unexpected error while deleting index",
+                    indexName,
+                    error = ex.Message,
+                    timestamp = DateTime.UtcNow
+                };
+            }
         }
     }
 }

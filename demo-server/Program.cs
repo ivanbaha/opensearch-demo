@@ -15,14 +15,21 @@ builder.Services.AddSingleton<IOpenSearchLowLevelClient>(serviceProvider =>
     var configuration = serviceProvider.GetRequiredService<IConfiguration>();
     var openSearchConfig = configuration.GetSection("OpenSearch");
 
-    var url = openSearchConfig["Url"] ?? throw new InvalidOperationException("OpenSearch URL is not configured");
+    var urls = openSearchConfig["Urls"]?.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                ?? throw new InvalidOperationException("OpenSearch URL(s) not configured");
+
     var username = openSearchConfig["Username"] ?? throw new InvalidOperationException("OpenSearch Username is not configured");
     var password = openSearchConfig["Password"] ?? throw new InvalidOperationException("OpenSearch Password is not configured");
     var trustSelfSigned = bool.Parse(openSearchConfig["TrustSelfSignedCertificate"] ?? "false");
 
-    var node = new Uri(url);
-    var config = new ConnectionConfiguration(node)
-        .BasicAuthentication(username, password);
+    var nodes = urls.Select(url => new Uri(url)).ToArray();
+    IConnectionPool connectionPool = nodes.Length > 1
+        ? new StaticConnectionPool(nodes)
+        : new SingleNodeConnectionPool(nodes[0]);
+
+    var config = new ConnectionConfiguration(connectionPool)
+        .BasicAuthentication(username, password)
+        .RequestTimeout(TimeSpan.FromSeconds(30));
 
     if (trustSelfSigned)
     {

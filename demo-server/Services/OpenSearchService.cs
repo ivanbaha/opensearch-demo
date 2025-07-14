@@ -170,10 +170,10 @@ namespace OpenSearchDemo.Services
                 var indexMapping = @"{
                     ""settings"": {
                         ""index"": {
-                            ""max_result_window"": 1000000000,
-                            ""number_of_shards"": 10,
+                            ""max_result_window"": 100000,
+                            ""number_of_shards"": 30,
                             ""number_of_replicas"": 1,
-                            ""refresh_interval"": ""60s""
+                            ""refresh_interval"": ""-1""
                         }
                     },
                     ""mappings"": {
@@ -963,6 +963,65 @@ namespace OpenSearchDemo.Services
             }
         }
 
+        public async Task<object> RefreshIndexAsync(string indexName)
+        {
+            try
+            {
+                _logger.LogInformation("Refreshing index: {IndexName}", indexName);
+
+                // Check if index exists first
+                var indexExistsResponse = await _client.Indices.ExistsAsync<StringResponse>(indexName);
+                if (!indexExistsResponse.Success || indexExistsResponse.HttpStatusCode == 404)
+                {
+                    return new
+                    {
+                        success = false,
+                        message = "Index does not exist",
+                        indexName
+                    };
+                }
+
+                // Refresh the index to make documents searchable immediately
+                var refreshResponse = await _client.Indices.RefreshAsync<StringResponse>(indexName);
+
+                if (!refreshResponse.Success)
+                {
+                    _logger.LogError("Failed to refresh index {IndexName}: {Error}", indexName, refreshResponse.Body);
+                    return new
+                    {
+                        success = false,
+                        message = "Failed to refresh index",
+                        indexName,
+                        error = refreshResponse.Body,
+                        statusCode = refreshResponse.HttpStatusCode
+                    };
+                }
+
+                _logger.LogInformation("Successfully refreshed index: {IndexName}", indexName);
+
+                return new
+                {
+                    success = true,
+                    message = "Index refreshed successfully",
+                    indexName,
+                    statusCode = refreshResponse.HttpStatusCode,
+                    timestamp = DateTime.UtcNow
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error while refreshing index: {IndexName}", indexName);
+                return new
+                {
+                    success = false,
+                    message = "Unexpected error while refreshing index",
+                    indexName,
+                    error = ex.Message,
+                    timestamp = DateTime.UtcNow
+                };
+            }
+        }
+
         public async Task<object> CheckDuplicatesAsync(string indexName = "papers")
         {
             try
@@ -1079,6 +1138,187 @@ namespace OpenSearchDemo.Services
                     error = ex.Message,
                     timestamp = DateTime.UtcNow
                 };
+            }
+        }
+
+        public async Task<object> CheckDataDistributionAsync(string indexName = "papers")
+        {
+            try
+            {
+                _logger.LogInformation("Checking data distribution for index: {IndexName}", indexName);
+
+                // Check if index exists first
+                var indexExistsResponse = await _client.Indices.ExistsAsync<StringResponse>(indexName);
+                if (!indexExistsResponse.Success || indexExistsResponse.HttpStatusCode == 404)
+                {
+                    return new
+                    {
+                        success = false,
+                        message = "Index does not exist",
+                        indexName
+                    };
+                }
+
+                // Get cluster health to see overall status
+                var clusterHealthResponse = await _client.Cluster.HealthAsync<StringResponse>(indexName);
+                object? clusterHealth = null;
+
+                if (clusterHealthResponse.Success)
+                {
+                    try
+                    {
+                        clusterHealth = JsonSerializer.Deserialize<object>(clusterHealthResponse.Body);
+                    }
+                    catch (JsonException ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to parse cluster health response");
+                        clusterHealth = new { error = "Failed to parse response", raw = clusterHealthResponse.Body };
+                    }
+                }
+
+                // Get cluster state for detailed shard allocation info (limit depth to avoid serialization issues)
+                var clusterStateResponse = await _client.Cluster.StateAsync<StringResponse>();
+
+                object? clusterState = null;
+                if (clusterStateResponse.Success)
+                {
+                    try
+                    {
+                        // Parse and extract only relevant parts to avoid deep nesting issues
+                        var fullState = JsonSerializer.Deserialize<JsonElement>(clusterStateResponse.Body);
+
+                        // Extract only the parts we need for distribution analysis
+                        var routingTable = fullState.TryGetProperty("routing_table", out var rt) ? rt : new JsonElement();
+                        var nodes = fullState.TryGetProperty("nodes", out var n) ? n : new JsonElement();
+
+                        clusterState = new
+                        {
+                            cluster_name = fullState.TryGetProperty("cluster_name", out var cn) ? cn.GetString() : "unknown",
+                            routing_table = ExtractIndexRoutingInfo(routingTable, indexName),
+                            nodes = ExtractNodesInfo(nodes),
+                            state_uuid = fullState.TryGetProperty("state_uuid", out var su) ? su.GetString() : "unknown"
+                        };
+                    }
+                    catch (JsonException ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to parse cluster state response");
+                        clusterState = new { error = "Failed to parse cluster state - too complex", message = "Cluster state response too deeply nested" };
+                    }
+                }
+                else
+                {
+                    clusterState = new { error = "Failed to get cluster state", raw = "Response failed" };
+                }
+
+                // Get index statistics for detailed info
+                var statsResponse = await _client.Indices.StatsAsync<StringResponse>(indexName);
+                object? indexStats = null;
+
+                if (statsResponse.Success)
+                {
+                    try
+                    {
+                        indexStats = JsonSerializer.Deserialize<object>(statsResponse.Body);
+                    }
+                    catch (JsonException ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to parse index stats response");
+                        indexStats = new { error = "Failed to parse response", raw = statsResponse.Body };
+                    }
+                }
+
+                _logger.LogInformation("Successfully retrieved data distribution for index: {IndexName}", indexName);
+
+                return new
+                {
+                    success = true,
+                    message = "Data distribution analysis completed",
+                    indexName,
+                    clusterHealth,
+                    clusterState,
+                    indexStatistics = indexStats,
+                    timestamp = DateTime.UtcNow
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error while checking data distribution for index: {IndexName}", indexName);
+                return new
+                {
+                    success = false,
+                    message = "Unexpected error while checking data distribution",
+                    indexName,
+                    error = ex.Message,
+                    timestamp = DateTime.UtcNow
+                };
+            }
+        }
+
+        private object ExtractIndexRoutingInfo(JsonElement routingTable, string indexName)
+        {
+            try
+            {
+                if (routingTable.TryGetProperty("indices", out var indices) &&
+                    indices.TryGetProperty(indexName, out var indexInfo) &&
+                    indexInfo.TryGetProperty("shards", out var shards))
+                {
+                    var shardInfo = new List<object>();
+
+                    foreach (var shardProperty in shards.EnumerateObject())
+                    {
+                        var shardNumber = shardProperty.Name;
+                        var shardArray = shardProperty.Value;
+
+                        foreach (var shard in shardArray.EnumerateArray())
+                        {
+                            shardInfo.Add(new
+                            {
+                                shard = shardNumber,
+                                primary = shard.TryGetProperty("primary", out var p) ? p.GetBoolean() : false,
+                                state = shard.TryGetProperty("state", out var s) ? s.GetString() : "unknown",
+                                node = shard.TryGetProperty("node", out var n) ? n.GetString() : "unknown"
+                            });
+                        }
+                    }
+
+                    return new { index = indexName, shards = shardInfo };
+                }
+
+                return new { index = indexName, shards = "No routing info found" };
+            }
+            catch (Exception ex)
+            {
+                return new { index = indexName, error = ex.Message };
+            }
+        }
+
+        private object ExtractNodesInfo(JsonElement nodes)
+        {
+            try
+            {
+                var nodeList = new List<object>();
+
+                foreach (var nodeProperty in nodes.EnumerateObject())
+                {
+                    var nodeId = nodeProperty.Name;
+                    var nodeInfo = nodeProperty.Value;
+
+                    nodeList.Add(new
+                    {
+                        id = nodeId,
+                        name = nodeInfo.TryGetProperty("name", out var name) ? name.GetString() : "unknown",
+                        transport_address = nodeInfo.TryGetProperty("transport_address", out var addr) ? addr.GetString() : "unknown",
+                        roles = nodeInfo.TryGetProperty("roles", out var roles) ?
+                            roles.EnumerateArray().Select(r => r.GetString()).ToArray() :
+                            Array.Empty<string>()
+                    });
+                }
+
+                return nodeList;
+            }
+            catch (Exception ex)
+            {
+                return new { error = ex.Message };
             }
         }
     }

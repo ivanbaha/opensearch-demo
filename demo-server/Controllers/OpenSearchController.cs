@@ -100,5 +100,26 @@ namespace OpenSearchDemo.Controllers
                 return Problem($"Error checking duplicates in index '{indexName}': {ex.Message}");
             }
         }
+
+        [HttpGet("distribution/{indexName?}")]
+        public async Task<IActionResult> GetDataDistribution(string? indexName = "papers")
+        {
+            try
+            {
+                // Validate index name
+                if (string.IsNullOrWhiteSpace(indexName))
+                {
+                    indexName = "papers"; // Default to papers index
+                }
+
+                var result = await _openSearchService.CheckDataDistributionAsync(indexName);
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to check data distribution for index: {IndexName}", indexName);
+                return Problem($"Error checking data distribution for index '{indexName}': {ex.Message}");
+            }
+        }
     }
 }

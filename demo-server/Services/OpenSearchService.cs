@@ -157,7 +157,7 @@ namespace OpenSearchDemo.Services
         {
             try
             {
-                var indexName = "papers";
+                var indexName = "papers_v1";
                 var indexExistsResponse = await _client.Indices.ExistsAsync<StringResponse>(indexName);
 
                 if (indexExistsResponse.Success)
@@ -170,15 +170,16 @@ namespace OpenSearchDemo.Services
                 var indexMapping = @"{
                     ""settings"": {
                         ""index"": {
-                            ""max_result_window"": 100000,
+                            ""max_result_window"": 10000,
                             ""number_of_shards"": 30,
-                            ""number_of_replicas"": 1,
+                            ""number_of_replicas"": 0,
                             ""refresh_interval"": ""-1""
                         }
                     },
                     ""mappings"": {
                         ""properties"": {
                             ""id"": { ""type"": ""keyword"" },
+                            ""doi"": { ""type"": ""keyword"" },
                             ""title"": { 
                                 ""type"": ""text"",
                                 ""analyzer"": ""standard"",
@@ -203,27 +204,28 @@ namespace OpenSearchDemo.Services
                                 }
                             },
                             ""authors"": { 
-                                ""type"": ""text"",
-                                ""analyzer"": ""standard"",
-                                ""fields"": {
-                                    ""keyword"": { ""type"": ""keyword"" }
+                                ""type"": ""nested"",
+                                ""properties"": {
+                                    ""name"": { ""type"": ""keyword"" },
+                                    ""ORCID"": { ""type"": ""keyword"" },
+                                    ""sequence"": { ""type"": ""keyword"" }
                                 }
                             },
-                            ""publicationHotScore"": { ""type"": ""double"" },
-                            ""publicationHotScore6m"": { ""type"": ""double"" },
-                            ""pageRank"": { ""type"": ""double"" },
-                            ""publishedAt"": { ""type"": ""date"" },
+                            ""publishedAt"": { ""type"": ""date"", ""null_value"": ""0001-01-01T00:00:00Z"" },
+                            ""publicationDateParts"": { ""type"": ""integer"" },
+                            ""publicationHotScore"": { ""type"": ""double"", ""null_value"": 0.0 },
+                            ""publicationHotScore6m"": { ""type"": ""double"", ""null_value"": 0.0 },
+                            ""pageRank"": { ""type"": ""double"", ""null_value"": 0.0 },
                             ""topics"": {
                                 ""type"": ""nested"",
                                 ""properties"": {
                                     ""name"": { ""type"": ""keyword"" },
                                     ""relevanceScore"": { ""type"": ""double"" },
                                     ""topScore"": { ""type"": ""double"" },
-                                    ""hotScore"": { ""type"": ""double"" }
+                                    ""hotScore"": { ""type"": ""double"" },
+                                    ""hotScore6m"": { ""type"": ""double"" }
                                 }
-                            },
-                            ""createdAt"": { ""type"": ""date"" },
-                            ""updatedAt"": { ""type"": ""date"" }
+                            }
                         }
                     }
                 }";

@@ -70,6 +70,15 @@ namespace OpenSearchDemo.Services
 
                         // Map the document using helper method
                         var document = MapDocumentForOpenSearch(statDoc, crossrefDoc, docId);
+
+                        // Skip papers without title and abstract
+                        if (string.IsNullOrWhiteSpace(document.GetType().GetProperty("title")?.GetValue(document) as string) &&
+                            string.IsNullOrWhiteSpace(document.GetType().GetProperty("abstract")?.GetValue(document) as string))
+                        {
+                            _logger.LogWarning("The paper '{DocId}' does not have neither title nor abstract.", docId);
+                            continue;
+                        }
+
                         documentsToIndex.Add(document);
                         processedCount++;
 
@@ -139,21 +148,37 @@ namespace OpenSearchDemo.Services
                     {
                         name = topicDoc.Contains("name") ? topicDoc["name"].AsString : "",
                         relevanceScore = topicDoc.Contains("relevanceScore") && !topicDoc["relevanceScore"].IsBsonNull ? topicDoc["relevanceScore"].ToDouble() : 0.0,
-                        topScore = topicDoc.Contains("topScore") && !topicDoc["topScore"].IsBsonNull ? topicDoc["topScore"].ToDouble() : (double?)null,
-                        hotScore = topicDoc.Contains("hotScore") && !topicDoc["hotScore"].IsBsonNull ? topicDoc["hotScore"].ToDouble() : 0.0
+                        topScore = topicDoc.Contains("topScore") && !topicDoc["topScore"].IsBsonNull ? topicDoc["topScore"].ToDouble() : 0.0,
+                        hotScore = topicDoc.Contains("hotScore") && !topicDoc["hotScore"].IsBsonNull ? topicDoc["hotScore"].ToDouble() : 0.0,
+                        hotScore6m = topicDoc.Contains("hotScore_6m") && !topicDoc["hotScore_6m"].IsBsonNull ? topicDoc["hotScore_6m"].ToDouble() : 0.0,
                     });
                 }
             }
 
             // Extract publication date
             DateTime? publishedAt = null;
+            var publicationDateParts = new List<int>();
             if (crossrefDoc.Contains("publishedAt") && crossrefDoc["publishedAt"].IsBsonDocument)
             {
                 var pubDate = crossrefDoc["publishedAt"].AsBsonDocument;
-                var year = pubDate.Contains("year") && !pubDate["year"].IsBsonNull ? pubDate["year"].AsInt32 : 1970;
-                var month = pubDate.Contains("month") && !pubDate["month"].IsBsonNull ? pubDate["month"].AsInt32 : 1;
-                var day = pubDate.Contains("day") && !pubDate["day"].IsBsonNull ? pubDate["day"].AsInt32 : 1;
-                publishedAt = new DateTime(year, month, day);
+
+                if (pubDate.Contains("year") && !pubDate["year"].IsBsonNull)
+                {
+                    var year = pubDate["year"].AsInt32;
+                    var month = pubDate.Contains("month") && !pubDate["month"].IsBsonNull ? pubDate["month"].AsInt32 : 1;
+                    var day = pubDate.Contains("day") && !pubDate["day"].IsBsonNull ? pubDate["day"].AsInt32 : 1;
+                    publishedAt = new DateTime(year, month, day);
+
+                    publicationDateParts.Add(year);
+                    if (pubDate.Contains("month") && !pubDate["month"].IsBsonNull)
+                    {
+                        publicationDateParts.Add(month);
+                    }
+                    if (pubDate.Contains("day") && !pubDate["day"].IsBsonNull)
+                    {
+                        publicationDateParts.Add(day);
+                    }
+                }
             }
 
             // Extract title
@@ -182,10 +207,9 @@ namespace OpenSearchDemo.Services
             var publisher = rawData.Contains("publisher") ? rawData["publisher"].AsString : "";
 
             // Extract authors (if available in raw_data)
-            var authors = "";
+            var authors = new List<object>(); ;
             if (rawData.Contains("author") && rawData["author"].IsBsonArray)
             {
-                var authorsList = new List<string>();
                 foreach (var author in rawData["author"].AsBsonArray)
                 {
                     if (author.IsBsonDocument)
@@ -195,29 +219,33 @@ namespace OpenSearchDemo.Services
                         var family = authorDoc.Contains("family") ? authorDoc["family"].AsString : "";
                         if (!string.IsNullOrEmpty(given) || !string.IsNullOrEmpty(family))
                         {
-                            authorsList.Add($"{given} {family}".Trim());
+                            authors.Add(new
+                            {
+                                name = $"{given} {family}".Trim(),
+                                ORCID = authorDoc.Contains("ORCID") ? authorDoc["ORCID"].AsString : "",
+                                sequence = authorDoc.Contains("sequence") ? authorDoc["sequence"].AsString : "",
+                            });
                         }
                     }
                 }
-                authors = string.Join(", ", authorsList);
             }
 
             // Create document for OpenSearch
             return new
             {
                 id = docId,
+                doi = docId,
                 title,
                 @abstract = rawData.Contains("abstract") ? rawData["abstract"].AsString : "",
                 journal,
                 publisher,
                 authors,
-                publicationHotScore = statDoc.Contains("publicationHotScore") && !statDoc["publicationHotScore"].IsBsonNull ? statDoc["publicationHotScore"].ToDouble() : 0.0,
-                publicationHotScore6m = 0.0, // Not available in current data structure
-                pageRank = statDoc.Contains("pageRank") && !statDoc["pageRank"].IsBsonNull ? statDoc["pageRank"].ToDouble() : (double?)null,
                 publishedAt,
+                publicationDateParts,
+                publicationHotScore = statDoc.Contains("publicationHotScore") && !statDoc["publicationHotScore"].IsBsonNull ? statDoc["publicationHotScore"].ToDouble() : 0.0,
+                publicationHotScore6m = statDoc.Contains("publicationHotScore_6m") && !statDoc["publicationHotScore_6m"].IsBsonNull ? statDoc["publicationHotScore_6m"].ToDouble() : 0.0,
+                pageRank = statDoc.Contains("pageRank") && !statDoc["pageRank"].IsBsonNull ? statDoc["pageRank"].ToDouble() : 0.0,
                 topics,
-                createdAt = statDoc.Contains("createdAt") ? statDoc["createdAt"].ToUniversalTime() : DateTime.UtcNow,
-                updatedAt = statDoc.Contains("updatedAt") ? statDoc["updatedAt"].ToUniversalTime() : DateTime.UtcNow
             };
         }
     }

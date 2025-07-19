@@ -69,6 +69,34 @@ namespace OpenSearchDemo.Services
             }
         }
 
+        public async Task<List<BsonDocument>> GetPublicationStatsBatchAsync(int batchSize, string? lastId = null)
+        {
+            try
+            {
+                _logger.LogInformation("Retrieving batch of {BatchSize} publication statistics documents starting from {LastId}", batchSize, lastId ?? "beginning");
+                var collection = _database.GetCollection<BsonDocument>("publicationStatistics");
+
+                FilterDefinition<BsonDocument> filter = Builders<BsonDocument>.Filter.Empty;
+                if (!string.IsNullOrEmpty(lastId))
+                {
+                    filter = Builders<BsonDocument>.Filter.Gt("_id", lastId);
+                }
+
+                var documents = await collection.Find(filter)
+                    .Sort(Builders<BsonDocument>.Sort.Ascending("_id"))
+                    .Limit(batchSize)
+                    .ToListAsync();
+
+                _logger.LogInformation("Retrieved {Count} publication statistics documents in batch", documents.Count);
+                return documents;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving publication statistics batch");
+                throw;
+            }
+        }
+
         public async Task<BsonDocument?> GetCrossrefDocumentAsync(string id)
         {
             try

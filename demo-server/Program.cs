@@ -67,6 +67,8 @@ builder.Services.AddScoped<IMongoDbService, MongoDbService>();
 builder.Services.AddScoped<IPapersService, PapersService>();
 builder.Services.AddScoped<IHealthService, HealthService>();
 builder.Services.AddHttpClient<ITogetherAIService, TogetherAIService>();
+builder.Services.AddSingleton<BackgroundSyncService>();
+builder.Services.AddHostedService<BackgroundSyncService>(provider => provider.GetRequiredService<BackgroundSyncService>());
 
 var app = builder.Build();
 

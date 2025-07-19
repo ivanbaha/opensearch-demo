@@ -64,12 +64,13 @@ namespace OpenSearchDemo.Controllers
             [FromQuery] string? topics = null,
             [FromQuery] string? sortBy = null,
             [FromQuery] int from = 0,
-            [FromQuery] int size = 10)
+            [FromQuery] int size = 10,
+            [FromQuery] bool? hasAbstract = null)
         {
             try
             {
                 var result = await _openSearchService.SearchPapersAsync(
-                    query, author, journal, fromDate, toDate, topics, sortBy, from, size);
+                    query, author, journal, fromDate, toDate, topics, sortBy, from, size, hasAbstract);
                 return Ok(result);
             }
             catch (Exception ex)
@@ -211,6 +212,47 @@ namespace OpenSearchDemo.Controllers
             {
                 _logger.LogError(ex, "Contextual search failed for query: {Query}", query);
                 return Problem($"Contextual search error: {ex.Message}");
+            }
+        }
+
+        [HttpGet("search/semantic")]
+        public async Task<IActionResult> SearchPapersSemantic(
+            [FromQuery] string query,
+            [FromQuery] int page = 1,
+            [FromQuery] int perPage = 10,
+            [FromQuery] string sort = "latest",
+            [FromQuery] bool? hasAbstract = null)
+        {
+            try
+            {
+                // Validate required query parameter
+                if (string.IsNullOrWhiteSpace(query))
+                {
+                    return BadRequest("Query parameter is required for semantic search");
+                }
+
+                // Validate pagination parameters
+                if (page < 1) page = 1;
+                if (perPage < 1 || perPage > 100) perPage = 10;
+
+                // Validate sort parameter
+                var validSorts = new[] { "hot", "top", "latest" };
+                if (!validSorts.Contains(sort.ToLower()))
+                {
+                    sort = "latest";
+                }
+
+                _logger.LogInformation("Performing semantic search with query: {Query}", query);
+
+                var result = await _openSearchService.SearchPapersSemanticAsync(query, page, perPage, sort, hasAbstract);
+
+                _logger.LogInformation("Semantic search completed for query: {Query}", query);
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Semantic search failed for query: {Query}", query);
+                return Problem($"Semantic search error: {ex.Message}");
             }
         }
     }

@@ -102,9 +102,11 @@ namespace OpenSearchDemo.Services
                 {
                     try
                     {
-                        _logger.LogInformation("Generating {Count} embeddings in bulk for papers sync", documentMappings.Count);
+                        _logger.LogInformation("Generating {Count} embeddings in bulk for papers sync (will be processed in chunks)", documentMappings.Count);
                         var contextualTexts = documentMappings.Select(m => m.contextualContent).ToArray();
                         var embeddings = await _togetherAIService.GenerateBulkEmbeddingsAsync(contextualTexts);
+
+                        _logger.LogInformation("Successfully generated {Count} embeddings for papers sync", embeddings.Length);
 
                         // Assign embeddings back to documents
                         for (int i = 0; i < Math.Min(embeddings.Length, documentMappings.Count); i++)
@@ -460,6 +462,8 @@ namespace OpenSearchDemo.Services
                 citationsCount = rawData.Contains("is-referenced-by-count") ? rawData["is-referenced-by-count"].AsInt32 : 0, // Add citationsCount field
                 voteScore = 0, // Add voteScore field (placeholder)
                 topics,
+                hasAbstract = !string.IsNullOrWhiteSpace(abstractText), // Add hasAbstract field
+                hasOpenSummary = !string.IsNullOrWhiteSpace(openSummary), // Add hasOpenSummary field
             };
         }
 

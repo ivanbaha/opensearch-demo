@@ -12,6 +12,7 @@ namespace OpenSearchDemo.Services
         private readonly string _apiKey;
         private readonly string _baseUrl;
         private readonly string _embeddingModel;
+        private readonly int _bulkChunkSize;
 
         public TogetherAIService(HttpClient httpClient, IConfiguration configuration, ILogger<TogetherAIService> logger)
         {
@@ -22,6 +23,11 @@ namespace OpenSearchDemo.Services
             _apiKey = _configuration["TogetherAI:ApiKey"] ?? throw new ArgumentException("TogetherAI:ApiKey not configured");
             _baseUrl = _configuration["TogetherAI:BaseUrl"] ?? "https://api.together.xyz/v1";
             _embeddingModel = _configuration["TogetherAI:EmbeddingModel"] ?? throw new ArgumentException("TogetherAI:EmbeddingModel not configured");
+            _bulkChunkSize = _configuration.GetValue<int>("TogetherAI:BulkChunkSize", 20);
+
+            // Configure HTTP timeout
+            var timeoutSeconds = _configuration.GetValue<int>("TogetherAI:HttpTimeoutSeconds", 300);
+            _httpClient.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
 
             _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_apiKey}");
         }
@@ -107,57 +113,101 @@ namespace OpenSearchDemo.Services
                     return [];
                 }
 
-                var requestBody = new
+                _logger.LogDebug("Processing {TotalCount} texts in chunks of {ChunkSize} with parallel requests",
+                    processedTexts.Length, _bulkChunkSize);
+
+                // Split texts into chunks for parallel processing
+                var chunks = new List<string[]>();
+                for (int i = 0; i < processedTexts.Length; i += _bulkChunkSize)
                 {
-                    model = _embeddingModel,
-                    input = processedTexts
-                };
-
-                var jsonContent = JsonSerializer.Serialize(requestBody);
-                var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
-
-                var response = await _httpClient.PostAsync($"{_baseUrl}/embeddings", content);
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    var errorContent = await response.Content.ReadAsStringAsync();
-                    _logger.LogError("Together AI bulk embedding API request failed. Status: {StatusCode}, Content: {Content}",
-                        response.StatusCode, errorContent);
-                    throw new HttpRequestException($"Together AI bulk embedding API request failed: {response.StatusCode}");
+                    var chunk = processedTexts
+                        .Skip(i)
+                        .Take(_bulkChunkSize)
+                        .ToArray();
+                    chunks.Add(chunk);
                 }
 
-                var responseContent = await response.Content.ReadAsStringAsync();
-                var embeddingResponse = JsonSerializer.Deserialize<JsonElement>(responseContent);
+                _logger.LogDebug("Split into {ChunkCount} chunks for parallel processing", chunks.Count);
 
-                if (embeddingResponse.TryGetProperty("data", out var dataArray))
+                // Process chunks in parallel
+                var tasks = chunks.Select(async (chunk, index) =>
                 {
-                    var embeddings = new List<float[]>();
-
-                    foreach (var item in dataArray.EnumerateArray())
+                    try
                     {
-                        if (item.TryGetProperty("embedding", out var embedding))
-                        {
-                            var embeddingVector = embedding.EnumerateArray()
-                                .Select(e => e.GetSingle())
-                                .ToArray();
-                            embeddings.Add(embeddingVector);
-                        }
+                        _logger.LogDebug("Processing chunk {ChunkIndex} with {ItemCount} items", index + 1, chunk.Length);
+                        var chunkEmbeddings = await ProcessEmbeddingChunkAsync(chunk);
+                        _logger.LogDebug("Completed chunk {ChunkIndex} with {ResultCount} embeddings", index + 1, chunkEmbeddings.Length);
+                        return chunkEmbeddings;
                     }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error processing chunk {ChunkIndex} with {ItemCount} items", index + 1, chunk.Length);
+                        // Return zero vectors for failed chunk
+                        return chunk.Select(_ => new float[768]).ToArray();
+                    }
+                });
 
-                    _logger.LogDebug("Generated {Count} embedding vectors for {TextCount} texts",
-                        embeddings.Count, processedTexts.Length);
+                var chunkResults = await Task.WhenAll(tasks);
 
-                    return embeddings.ToArray();
-                }
+                // Combine all chunk results
+                var allEmbeddings = chunkResults.SelectMany(chunk => chunk).ToArray();
 
-                _logger.LogError("Unexpected response format from Together AI bulk embedding API: {Response}", responseContent);
-                throw new InvalidOperationException("Unexpected response format from Together AI bulk embedding API");
+                _logger.LogDebug("Generated {TotalCount} embedding vectors for {TextCount} texts using {ChunkCount} parallel chunks",
+                    allEmbeddings.Length, processedTexts.Length, chunks.Count);
+
+                return allEmbeddings;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error generating bulk embeddings for {TextCount} texts", texts.Count());
                 throw;
             }
+        }
+
+        private async Task<float[][]> ProcessEmbeddingChunkAsync(string[] texts)
+        {
+            var requestBody = new
+            {
+                model = _embeddingModel,
+                input = texts
+            };
+
+            var jsonContent = JsonSerializer.Serialize(requestBody);
+            var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
+
+            var response = await _httpClient.PostAsync($"{_baseUrl}/embeddings", content);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                _logger.LogError("Together AI chunk embedding API request failed. Status: {StatusCode}, Content: {Content}",
+                    response.StatusCode, errorContent);
+                throw new HttpRequestException($"Together AI chunk embedding API request failed: {response.StatusCode}");
+            }
+
+            var responseContent = await response.Content.ReadAsStringAsync();
+            var embeddingResponse = JsonSerializer.Deserialize<JsonElement>(responseContent);
+
+            if (embeddingResponse.TryGetProperty("data", out var dataArray))
+            {
+                var embeddings = new List<float[]>();
+
+                foreach (var item in dataArray.EnumerateArray())
+                {
+                    if (item.TryGetProperty("embedding", out var embedding))
+                    {
+                        var embeddingVector = embedding.EnumerateArray()
+                            .Select(e => e.GetSingle())
+                            .ToArray();
+                        embeddings.Add(embeddingVector);
+                    }
+                }
+
+                return embeddings.ToArray();
+            }
+
+            _logger.LogError("Unexpected response format from Together AI chunk embedding API: {Response}", responseContent);
+            throw new InvalidOperationException("Unexpected response format from Together AI chunk embedding API");
         }
     }
 }

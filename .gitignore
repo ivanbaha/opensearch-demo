@@ -11,6 +11,9 @@ appsettings.json
 appsettings.Development.json
 appsettings.Production.json
 
+# Testing scripts
+sync-console*
+
 # .NET Core build outputs
 bin/
 obj/

@@ -8,6 +8,87 @@ namespace OpenSearchDemo.Services
         private readonly IOpenSearchLowLevelClient _client;
         private readonly ILogger<OpenSearchService> _logger;
 
+        // Centralized mapping definition (copied from sync-console)
+        private static readonly string IndexMappingProperties = @"{
+            ""id"": { ""type"": ""keyword"" },
+            ""oipubId"": { ""type"": ""keyword"" },
+            ""doi"": { ""type"": ""keyword"" },
+            ""title"": { 
+                ""type"": ""text"",
+                ""analyzer"": ""standard"",
+                ""fields"": {
+                    ""keyword"": { ""type"": ""keyword"" }
+                }
+            },
+            ""abstract"": { 
+                ""type"": ""text"",
+                ""analyzer"": ""standard""
+            },
+            ""openSummary"": { 
+                ""type"": ""text"",
+                ""analyzer"": ""standard""
+            },
+            ""journal"": { 
+                ""type"": ""text"",
+                ""fields"": {
+                    ""keyword"": { ""type"": ""keyword"" }
+                }
+            },
+            ""publisher"": { 
+                ""type"": ""text"",
+                ""fields"": {
+                    ""keyword"": { ""type"": ""keyword"" }
+                }
+            },
+            ""authors"": { 
+                ""type"": ""nested"",
+                ""properties"": {
+                    ""name"": { ""type"": ""keyword"" },
+                    ""ORCID"": { ""type"": ""keyword"" },
+                    ""sequence"": { ""type"": ""keyword"" }
+                }
+            },
+            ""publishedAt"": { ""type"": ""date"", ""null_value"": ""0001-01-01T00:00:00Z"" },
+            ""publicationDateParts"": { ""type"": ""integer"" },
+            ""publicationHotScore"": { ""type"": ""double"", ""null_value"": 0.0 },
+            ""publicationHotScore6m"": { ""type"": ""double"", ""null_value"": 0.0 },
+            ""pageRank"": { ""type"": ""double"", ""null_value"": 0.0 },
+            ""citationsCount"": { ""type"": ""integer"", ""null_value"": 0.0 },
+            ""voteScore"": { ""type"": ""integer"", ""null_value"": 0.0 },
+            ""topics"": {
+                ""type"": ""nested"",
+                ""properties"": {
+                    ""name"": { ""type"": ""keyword"" },
+                    ""relevanceScore"": { ""type"": ""double"", ""null_value"": 0.0 },
+                    ""topScore"": { ""type"": ""double"", ""null_value"": 0.0 },
+                    ""hotScore"": { ""type"": ""double"", ""null_value"": 0.0 },
+                    ""hotScore6m"": { ""type"": ""double"", ""null_value"": 0.0 }
+                }
+            }
+        }";
+
+        private static string GetFullIndexMapping()
+        {
+            return $@"{{
+                ""settings"": {{
+                    ""index"": {{
+                        ""max_result_window"": 50000,
+                        ""number_of_shards"": 30,
+                        ""number_of_replicas"": 0,
+                        ""refresh_interval"": ""-1""
+                    }}
+                }},
+                ""aliases"": {{
+                    ""papers"": {{
+                        ""is_write_index"": true
+                    }}
+                }},
+                ""mappings"": {{
+                    ""properties"": {IndexMappingProperties}
+                }}
+            }}";
+        }
+
         public OpenSearchService(IOpenSearchLowLevelClient client, ILogger<OpenSearchService> logger)
         {
             _client = client;
@@ -167,69 +248,7 @@ namespace OpenSearchDemo.Services
 
                 _logger.LogInformation("Creating papers index");
 
-                var indexMapping = @"{
-                    ""settings"": {
-                        ""index"": {
-                            ""max_result_window"": 10000,
-                            ""number_of_shards"": 30,
-                            ""number_of_replicas"": 0,
-                            ""refresh_interval"": ""-1""
-                        }
-                    },
-                    ""mappings"": {
-                        ""properties"": {
-                            ""id"": { ""type"": ""keyword"" },
-                            ""doi"": { ""type"": ""keyword"" },
-                            ""title"": { 
-                                ""type"": ""text"",
-                                ""analyzer"": ""standard"",
-                                ""fields"": {
-                                    ""keyword"": { ""type"": ""keyword"" }
-                                }
-                            },
-                            ""abstract"": { 
-                                ""type"": ""text"",
-                                ""analyzer"": ""standard""
-                            },
-                            ""journal"": { 
-                                ""type"": ""text"",
-                                ""fields"": {
-                                    ""keyword"": { ""type"": ""keyword"" }
-                                }
-                            },
-                            ""publisher"": { 
-                                ""type"": ""text"",
-                                ""fields"": {
-                                    ""keyword"": { ""type"": ""keyword"" }
-                                }
-                            },
-                            ""authors"": { 
-                                ""type"": ""nested"",
-                                ""properties"": {
-                                    ""name"": { ""type"": ""keyword"" },
-                                    ""ORCID"": { ""type"": ""keyword"" },
-                                    ""sequence"": { ""type"": ""keyword"" }
-                                }
-                            },
-                            ""publishedAt"": { ""type"": ""date"", ""null_value"": ""0001-01-01T00:00:00Z"" },
-                            ""publicationDateParts"": { ""type"": ""integer"" },
-                            ""publicationHotScore"": { ""type"": ""double"", ""null_value"": 0.0 },
-                            ""publicationHotScore6m"": { ""type"": ""double"", ""null_value"": 0.0 },
-                            ""pageRank"": { ""type"": ""double"", ""null_value"": 0.0 },
-                            ""topics"": {
-                                ""type"": ""nested"",
-                                ""properties"": {
-                                    ""name"": { ""type"": ""keyword"" },
-                                    ""relevanceScore"": { ""type"": ""double"" },
-                                    ""topScore"": { ""type"": ""double"" },
-                                    ""hotScore"": { ""type"": ""double"" },
-                                    ""hotScore6m"": { ""type"": ""double"" }
-                                }
-                            }
-                        }
-                    }
-                }";
-
+                var indexMapping = GetFullIndexMapping();
                 var createIndexResponse = await _client.Indices.CreateAsync<StringResponse>(indexName, PostData.String(indexMapping));
                 if (!createIndexResponse.Success)
                 {
@@ -442,7 +461,23 @@ namespace OpenSearchDemo.Services
                     track_total_hits = true,
                     query = new
                     {
-                        match_all = new { }
+                        @bool = new
+                        {
+                            must = new object[]
+                            {
+                                new { match_all = new { } }
+                            },
+                            filter = new object[]
+                            {
+                                new
+                                {
+                                    range = new Dictionary<string, object>
+                                    {
+                                        ["publishedAt"] = new { lte = DateTime.UtcNow.ToString("yyyy-MM-dd") }
+                                    }
+                                }
+                            }
+                        }
                     },
                     sort = new List<object>()
                 };
@@ -510,7 +545,7 @@ namespace OpenSearchDemo.Services
                 var from = (page - 1) * perPage;
                 var size = perPage;
 
-                // Build search query with nested topic filter
+                // Build search query with nested topic filter and future date exclusion
                 var searchQuery = new
                 {
                     from,
@@ -518,20 +553,39 @@ namespace OpenSearchDemo.Services
                     track_total_hits = true,
                     query = new
                     {
-                        nested = new
+                        @bool = new
                         {
-                            path = "topics",
-                            query = new
+                            must = new object[]
                             {
-                                term = new Dictionary<string, object>
+                                new
                                 {
-                                    ["topics.name"] = topicName
+                                    nested = new
+                                    {
+                                        path = "topics",
+                                        query = new
+                                        {
+                                            term = new Dictionary<string, object>
+                                            {
+                                                ["topics.name"] = topicName
+                                            }
+                                        },
+                                        inner_hits = new
+                                        {
+                                            size = 1,
+                                            _source = new[] { "relevanceScore", "topScore", "hotScore" }
+                                        }
+                                    }
                                 }
                             },
-                            inner_hits = new
+                            filter = new object[]
                             {
-                                size = 1,
-                                _source = new[] { "relevanceScore", "topScore", "hotScore" }
+                                new
+                                {
+                                    range = new Dictionary<string, object>
+                                    {
+                                        ["publishedAt"] = new { lte = DateTime.UtcNow.ToString("yyyy-MM-dd") }
+                                    }
+                                }
                             }
                         }
                     },

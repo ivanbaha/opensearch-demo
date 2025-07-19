@@ -143,5 +143,30 @@ namespace OpenSearchDemo.Controllers
                 return Problem($"List by topic error: {ex.Message}");
             }
         }
+
+        [HttpPost("refresh")]
+        public async Task<IActionResult> RefreshIndex([FromQuery] string indexName = "papers")
+        {
+            try
+            {
+                // Validate index name
+                if (string.IsNullOrWhiteSpace(indexName))
+                {
+                    return BadRequest("Index name is required");
+                }
+
+                _logger.LogInformation("Refreshing index: {IndexName}", indexName);
+
+                var result = await _openSearchService.RefreshIndexAsync(indexName);
+
+                _logger.LogInformation("Index refresh completed for: {IndexName}", indexName);
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Index refresh failed for: {IndexName}", indexName);
+                return Problem($"Index refresh error: {ex.Message}");
+            }
+        }
     }
 }

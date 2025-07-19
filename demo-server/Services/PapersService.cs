@@ -234,17 +234,21 @@ namespace OpenSearchDemo.Services
             return new
             {
                 id = docId,
-                doi = docId,
+                oipubId = 0, // Add oipubId field
+                doi = rawData.Contains("DOI") ? rawData["DOI"].AsString : docId, // Use DOI from raw_data, fallback to docId
                 title,
                 @abstract = rawData.Contains("abstract") ? rawData["abstract"].AsString : "",
+                openSummary = "", // Add openSummary field
                 journal,
                 publisher,
                 authors,
-                publishedAt,
+                publishedAt = publishedAt ?? new DateTime(1, 1, 1), // Handle null values
                 publicationDateParts,
                 publicationHotScore = statDoc.Contains("publicationHotScore") && !statDoc["publicationHotScore"].IsBsonNull ? statDoc["publicationHotScore"].ToDouble() : 0.0,
                 publicationHotScore6m = statDoc.Contains("publicationHotScore_6m") && !statDoc["publicationHotScore_6m"].IsBsonNull ? statDoc["publicationHotScore_6m"].ToDouble() : 0.0,
                 pageRank = statDoc.Contains("pageRank") && !statDoc["pageRank"].IsBsonNull ? statDoc["pageRank"].ToDouble() : 0.0,
+                citationsCount = rawData.Contains("is-referenced-by-count") ? rawData["is-referenced-by-count"].AsInt32 : 0, // Add citationsCount field
+                voteScore = 0, // Add voteScore field (placeholder)
                 topics,
             };
         }

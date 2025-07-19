@@ -1,5 +1,7 @@
 using MongoDB.Bson;
 using OpenSearchDemo.Services;
+using System.Text.RegularExpressions;
+using Ganss.Xss;
 
 namespace OpenSearchDemo.Services
 {
@@ -7,12 +9,14 @@ namespace OpenSearchDemo.Services
     {
         private readonly IOpenSearchService _openSearchService;
         private readonly IMongoDbService _mongoDbService;
+        private readonly ITogetherAIService _togetherAIService;
         private readonly ILogger<PapersService> _logger;
 
-        public PapersService(IOpenSearchService openSearchService, IMongoDbService mongoDbService, ILogger<PapersService> logger)
+        public PapersService(IOpenSearchService openSearchService, IMongoDbService mongoDbService, ITogetherAIService togetherAIService, ILogger<PapersService> logger)
         {
             _openSearchService = openSearchService;
             _mongoDbService = mongoDbService;
+            _togetherAIService = togetherAIService;
             _logger = logger;
         }
 
@@ -54,7 +58,10 @@ namespace OpenSearchDemo.Services
                 _logger.LogInformation("Bulk retrieved {Found} crossref documents in {Duration}ms",
                     crossrefDocuments.Count, crossrefBulkTime.TotalMilliseconds);
 
-                // Process all documents with bulk data
+                // Process all documents with bulk data and bulk embeddings
+                var documentMappings = new List<(BsonDocument statDoc, BsonDocument crossrefDoc, string docId, string contextualContent, int index)>();
+
+                // First pass: Map documents without embeddings
                 foreach (var statDoc in publicationStatsDocuments)
                 {
                     try
@@ -68,8 +75,8 @@ namespace OpenSearchDemo.Services
                             continue;
                         }
 
-                        // Map the document using helper method
-                        var document = MapDocumentForOpenSearch(statDoc, crossrefDoc, docId);
+                        // Map the document using helper method (without embedding)
+                        var (document, contextualContent) = MapDocumentForOpenSearchWithoutEmbedding(statDoc, crossrefDoc, docId);
 
                         // Skip papers without title and abstract
                         if (string.IsNullOrWhiteSpace(document.GetType().GetProperty("title")?.GetValue(document) as string) &&
@@ -79,15 +86,10 @@ namespace OpenSearchDemo.Services
                             continue;
                         }
 
-                        documentsToIndex.Add(document);
+                        documentMappings.Add((statDoc, crossrefDoc, docId, contextualContent, documentsToIndex.Count));
+                        // Add placeholder to maintain index alignment
+                        documentsToIndex.Add(null!);
                         processedCount++;
-
-                        // Index in batches of 1000
-                        if (documentsToIndex.Count >= 1000)
-                        {
-                            await _openSearchService.IndexDocumentsBatchAsync("papers", documentsToIndex);
-                            documentsToIndex.Clear();
-                        }
                     }
                     catch (Exception ex)
                     {
@@ -95,10 +97,53 @@ namespace OpenSearchDemo.Services
                     }
                 }
 
-                // Index remaining documents
+                // Second pass: Generate embeddings in bulk
+                if (documentMappings.Count > 0)
+                {
+                    try
+                    {
+                        _logger.LogInformation("Generating {Count} embeddings in bulk for papers sync", documentMappings.Count);
+                        var contextualTexts = documentMappings.Select(m => m.contextualContent).ToArray();
+                        var embeddings = await _togetherAIService.GenerateBulkEmbeddingsAsync(contextualTexts);
+
+                        // Assign embeddings back to documents
+                        for (int i = 0; i < Math.Min(embeddings.Length, documentMappings.Count); i++)
+                        {
+                            var docIndex = documentMappings[i].index;
+                            var (statDoc, crossrefDoc, docId, _, index) = documentMappings[i];
+                            var embedding = embeddings[i];
+
+                            // Create new document with embedding instead of modifying existing one
+                            var newDocument = MapDocumentForOpenSearchWithEmbedding(statDoc, crossrefDoc, docId, embedding);
+                            documentsToIndex[index] = newDocument;
+                        }
+
+                        _logger.LogInformation("Successfully assigned {Count} embeddings to documents", embeddings.Length);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to generate bulk embeddings for papers sync, falling back to zero vectors");
+
+                        // Fallback: assign zero vectors to all documents
+                        var zeroVector = new float[768];
+                        foreach (var (statDoc, crossrefDoc, docId, _, index) in documentMappings)
+                        {
+                            var newDocument = MapDocumentForOpenSearchWithEmbedding(statDoc, crossrefDoc, docId, zeroVector);
+                            documentsToIndex[index] = newDocument;
+                        }
+                    }
+                }
+
+                // Index all documents in batches
+                var batchSize = 1000;
+                for (int i = 0; i < documentsToIndex.Count; i += batchSize)
+                {
+                    var batch = documentsToIndex.Skip(i).Take(batchSize).ToList();
+                    await _openSearchService.IndexDocumentsBatchAsync("papers_v2", batch);
+                }
                 if (documentsToIndex.Count > 0)
                 {
-                    await _openSearchService.IndexDocumentsBatchAsync("papers", documentsToIndex);
+                    await _openSearchService.IndexDocumentsBatchAsync("papers_v2", documentsToIndex);
                 }
 
                 var openSearchEndTime = DateTime.UtcNow;
@@ -132,10 +177,10 @@ namespace OpenSearchDemo.Services
             }
         }
 
-        private object MapDocumentForOpenSearch(BsonDocument statDoc, BsonDocument crossrefDoc, string docId)
+        private async Task<object> MapDocumentForOpenSearchAsync(BsonDocument statDoc, BsonDocument crossrefDoc, string docId)
         {
             // Extract and map data
-            var rawData = crossrefDoc.Contains("raw_data") ? crossrefDoc["raw_data"].AsBsonDocument : new BsonDocument();
+            var rawData = crossrefDoc.Contains("raw_data") ? crossrefDoc["raw_data"].AsBsonDocument : [];
 
             // Map topics from topicRelatedScores
             var topics = new List<object>();
@@ -192,6 +237,32 @@ namespace OpenSearchDemo.Services
                 }
             }
 
+            // Extract abstract
+            var abstractText = rawData.Contains("abstract") ? rawData["abstract"].AsString : "";
+
+            // Extract openSummary (placeholder for now)
+            var openSummary = "";
+
+            // Create contextual content by combining title, abstract, and openSummary
+            var contextualContent = string.Join(" ", new[] { title, abstractText, openSummary }
+                .Where(s => !string.IsNullOrWhiteSpace(s)));
+
+            // Create full text content for search (same as contextual content for now)
+            var fullTextContent = contextualContent;
+
+            // Generate embedding for the contextual content
+            float[] embeddingVector;
+            try
+            {
+                embeddingVector = await _togetherAIService.GenerateEmbeddingAsync(contextualContent);
+                _logger.LogDebug("Generated embedding vector for document {DocId}", docId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to generate embedding for document {DocId}, using zero vector", docId);
+                embeddingVector = new float[768]; // Use zero vector as fallback
+            }
+
             // Extract journal
             var journal = "";
             if (rawData.Contains("container-title") && rawData["container-title"].IsBsonArray)
@@ -237,8 +308,11 @@ namespace OpenSearchDemo.Services
                 oipubId = 0, // Add oipubId field
                 doi = rawData.Contains("DOI") ? rawData["DOI"].AsString : docId, // Use DOI from raw_data, fallback to docId
                 title,
-                @abstract = rawData.Contains("abstract") ? rawData["abstract"].AsString : "",
-                openSummary = "", // Add openSummary field
+                @abstract = abstractText,
+                openSummary, // Add openSummary field
+                fullTextContent,
+                embeddingVector,
+                contextualContent,
                 journal,
                 publisher,
                 authors,
@@ -251,6 +325,306 @@ namespace OpenSearchDemo.Services
                 voteScore = 0, // Add voteScore field (placeholder)
                 topics,
             };
+        }
+
+        private object MapDocumentForOpenSearchWithEmbedding(BsonDocument statDoc, BsonDocument crossrefDoc, string docId, float[] embeddingVector)
+        {
+            var rawData = crossrefDoc.Contains("raw_data") ? crossrefDoc["raw_data"].AsBsonDocument : new BsonDocument();
+
+            // Map topics from topicRelatedScores
+            var topics = new List<object>();
+            if (statDoc.Contains("topicRelatedScores") && statDoc["topicRelatedScores"].IsBsonArray)
+            {
+                foreach (var topicScore in statDoc["topicRelatedScores"].AsBsonArray)
+                {
+                    var topicDoc = topicScore.AsBsonDocument;
+                    topics.Add(new
+                    {
+                        name = topicDoc.Contains("name") ? topicDoc["name"].AsString : "",
+                        relevanceScore = topicDoc.Contains("relevanceScore") && !topicDoc["relevanceScore"].IsBsonNull ? topicDoc["relevanceScore"].ToDouble() : 0.0,
+                        topScore = topicDoc.Contains("topScore") && !topicDoc["topScore"].IsBsonNull ? topicDoc["topScore"].ToDouble() : 0.0,
+                        hotScore = topicDoc.Contains("hotScore") && !topicDoc["hotScore"].IsBsonNull ? topicDoc["hotScore"].ToDouble() : 0.0,
+                        hotScore6m = topicDoc.Contains("hotScore_6m") && !topicDoc["hotScore_6m"].IsBsonNull ? topicDoc["hotScore_6m"].ToDouble() : 0.0,
+                    });
+                }
+            }
+
+            // Extract publication date
+            DateTime? publishedAt = null;
+            var publicationDateParts = new List<int>();
+            if (crossrefDoc.Contains("publishedAt") && crossrefDoc["publishedAt"].IsBsonDocument)
+            {
+                var pubDate = crossrefDoc["publishedAt"].AsBsonDocument;
+
+                if (pubDate.Contains("year") && !pubDate["year"].IsBsonNull)
+                {
+                    var year = pubDate["year"].AsInt32;
+                    var month = pubDate.Contains("month") && !pubDate["month"].IsBsonNull ? pubDate["month"].AsInt32 : 1;
+                    var day = pubDate.Contains("day") && !pubDate["day"].IsBsonNull ? pubDate["day"].AsInt32 : 1;
+                    publishedAt = new DateTime(year, month, day);
+
+                    publicationDateParts.Add(year);
+                    if (pubDate.Contains("month") && !pubDate["month"].IsBsonNull)
+                    {
+                        publicationDateParts.Add(month);
+                    }
+                    if (pubDate.Contains("day") && !pubDate["day"].IsBsonNull)
+                    {
+                        publicationDateParts.Add(day);
+                    }
+                }
+            }
+
+            // Extract title
+            var title = "";
+            if (rawData.Contains("title") && rawData["title"].IsBsonArray)
+            {
+                var titleArray = rawData["title"].AsBsonArray;
+                if (titleArray.Count > 0)
+                {
+                    title = CleanTextContent(titleArray[0].AsString);
+                }
+            }
+
+            // Extract abstract
+            var abstractText = CleanTextContent(rawData.Contains("abstract") ? rawData["abstract"].AsString : "");
+
+            // Extract openSummary (placeholder for now)
+            var openSummary = CleanTextContent("");
+
+            // Create contextual content by combining title, abstract, and openSummary
+            var contextualContent = string.Join(" ", new[] { title, abstractText, openSummary }
+                .Where(s => !string.IsNullOrWhiteSpace(s)));
+
+            // Create full text content for search (same as contextual content for now)
+            var fullTextContent = contextualContent;
+
+            // Extract journal
+            var journal = "";
+            if (rawData.Contains("container-title") && rawData["container-title"].IsBsonArray)
+            {
+                var journalArray = rawData["container-title"].AsBsonArray;
+                if (journalArray.Count > 0)
+                {
+                    journal = journalArray[0].AsString;
+                }
+            }
+
+            // Extract publisher
+            var publisher = rawData.Contains("publisher") ? rawData["publisher"].AsString : "";
+
+            // Extract authors (if available in raw_data)
+            var authors = new List<object>();
+            if (rawData.Contains("author") && rawData["author"].IsBsonArray)
+            {
+                foreach (var author in rawData["author"].AsBsonArray)
+                {
+                    if (author.IsBsonDocument)
+                    {
+                        var authorDoc = author.AsBsonDocument;
+                        var given = authorDoc.Contains("given") ? authorDoc["given"].AsString : "";
+                        var family = authorDoc.Contains("family") ? authorDoc["family"].AsString : "";
+                        if (!string.IsNullOrEmpty(given) || !string.IsNullOrEmpty(family))
+                        {
+                            authors.Add(new
+                            {
+                                name = $"{given} {family}".Trim(),
+                                ORCID = authorDoc.Contains("ORCID") ? authorDoc["ORCID"].AsString : "",
+                                sequence = authorDoc.Contains("sequence") ? authorDoc["sequence"].AsString : "",
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Create document for OpenSearch with provided embedding
+            return new
+            {
+                id = docId,
+                oipubId = 0, // Add oipubId field
+                doi = rawData.Contains("DOI") ? rawData["DOI"].AsString : docId, // Use DOI from raw_data, fallback to docId
+                title,
+                @abstract = abstractText,
+                openSummary, // Add openSummary field
+                fullTextContent,
+                embeddingVector, // Use the provided embedding
+                contextualContent,
+                journal,
+                publisher,
+                authors,
+                publishedAt = publishedAt ?? new DateTime(1, 1, 1), // Handle null values
+                publicationDateParts,
+                publicationHotScore = statDoc.Contains("publicationHotScore") && !statDoc["publicationHotScore"].IsBsonNull ? statDoc["publicationHotScore"].ToDouble() : 0.0,
+                publicationHotScore6m = statDoc.Contains("publicationHotScore_6m") && !statDoc["publicationHotScore_6m"].IsBsonNull ? statDoc["publicationHotScore_6m"].ToDouble() : 0.0,
+                pageRank = statDoc.Contains("pageRank") && !statDoc["pageRank"].IsBsonNull ? statDoc["pageRank"].ToDouble() : 0.0,
+                citationsCount = rawData.Contains("is-referenced-by-count") ? rawData["is-referenced-by-count"].AsInt32 : 0, // Add citationsCount field
+                voteScore = 0, // Add voteScore field (placeholder)
+                topics,
+            };
+        }
+
+        private (object document, string contextualContent) MapDocumentForOpenSearchWithoutEmbedding(BsonDocument statDoc, BsonDocument crossrefDoc, string docId)
+        {
+            var rawData = crossrefDoc.Contains("raw_data") ? crossrefDoc["raw_data"].AsBsonDocument : new BsonDocument();
+
+            // Map topics from topicRelatedScores
+            var topics = new List<object>();
+            if (statDoc.Contains("topicRelatedScores") && statDoc["topicRelatedScores"].IsBsonArray)
+            {
+                foreach (var topicScore in statDoc["topicRelatedScores"].AsBsonArray)
+                {
+                    var topicDoc = topicScore.AsBsonDocument;
+                    topics.Add(new
+                    {
+                        name = topicDoc.Contains("name") ? topicDoc["name"].AsString : "",
+                        relevanceScore = topicDoc.Contains("relevanceScore") && !topicDoc["relevanceScore"].IsBsonNull ? topicDoc["relevanceScore"].ToDouble() : 0.0,
+                        topScore = topicDoc.Contains("topScore") && !topicDoc["topScore"].IsBsonNull ? topicDoc["topScore"].ToDouble() : 0.0,
+                        hotScore = topicDoc.Contains("hotScore") && !topicDoc["hotScore"].IsBsonNull ? topicDoc["hotScore"].ToDouble() : 0.0,
+                        hotScore6m = topicDoc.Contains("hotScore_6m") && !topicDoc["hotScore_6m"].IsBsonNull ? topicDoc["hotScore_6m"].ToDouble() : 0.0,
+                    });
+                }
+            }
+
+            // Extract publication date
+            DateTime? publishedAt = null;
+            var publicationDateParts = new List<int>();
+            if (crossrefDoc.Contains("publishedAt") && crossrefDoc["publishedAt"].IsBsonDocument)
+            {
+                var pubDate = crossrefDoc["publishedAt"].AsBsonDocument;
+
+                if (pubDate.Contains("year") && !pubDate["year"].IsBsonNull)
+                {
+                    var year = pubDate["year"].AsInt32;
+                    var month = pubDate.Contains("month") && !pubDate["month"].IsBsonNull ? pubDate["month"].AsInt32 : 1;
+                    var day = pubDate.Contains("day") && !pubDate["day"].IsBsonNull ? pubDate["day"].AsInt32 : 1;
+                    publishedAt = new DateTime(year, month, day);
+
+                    publicationDateParts.Add(year);
+                    if (pubDate.Contains("month") && !pubDate["month"].IsBsonNull)
+                    {
+                        publicationDateParts.Add(month);
+                    }
+                    if (pubDate.Contains("day") && !pubDate["day"].IsBsonNull)
+                    {
+                        publicationDateParts.Add(day);
+                    }
+                }
+            }
+
+            // Extract title
+            var title = "";
+            if (rawData.Contains("title") && rawData["title"].IsBsonArray)
+            {
+                var titleArray = rawData["title"].AsBsonArray;
+                if (titleArray.Count > 0)
+                {
+                    title = CleanTextContent(titleArray[0].AsString);
+                }
+            }
+
+            // Extract abstract
+            var abstractText = CleanTextContent(rawData.Contains("abstract") ? rawData["abstract"].AsString : "");
+
+            // Extract openSummary (placeholder for now)
+            var openSummary = CleanTextContent("");
+
+            // Create contextual content by combining title, abstract, and openSummary
+            var contextualContent = string.Join(" ", new[] { title, abstractText, openSummary }
+                .Where(s => !string.IsNullOrWhiteSpace(s)));
+
+            // Create full text content for search (same as contextual content for now)
+            var fullTextContent = contextualContent;
+
+            // Extract journal
+            var journal = "";
+            if (rawData.Contains("container-title") && rawData["container-title"].IsBsonArray)
+            {
+                var journalArray = rawData["container-title"].AsBsonArray;
+                if (journalArray.Count > 0)
+                {
+                    journal = journalArray[0].AsString;
+                }
+            }
+
+            // Extract publisher
+            var publisher = rawData.Contains("publisher") ? rawData["publisher"].AsString : "";
+
+            // Extract authors (if available in raw_data)
+            var authors = new List<object>();
+            if (rawData.Contains("author") && rawData["author"].IsBsonArray)
+            {
+                foreach (var author in rawData["author"].AsBsonArray)
+                {
+                    if (author.IsBsonDocument)
+                    {
+                        var authorDoc = author.AsBsonDocument;
+                        var given = authorDoc.Contains("given") ? authorDoc["given"].AsString : "";
+                        var family = authorDoc.Contains("family") ? authorDoc["family"].AsString : "";
+                        if (!string.IsNullOrEmpty(given) || !string.IsNullOrEmpty(family))
+                        {
+                            authors.Add(new
+                            {
+                                name = $"{given} {family}".Trim(),
+                                ORCID = authorDoc.Contains("ORCID") ? authorDoc["ORCID"].AsString : "",
+                                sequence = authorDoc.Contains("sequence") ? authorDoc["sequence"].AsString : "",
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Create document for OpenSearch (without embedding, will be added later)
+            var document = new
+            {
+                id = docId,
+                oipubId = 0, // Add oipubId field
+                doi = rawData.Contains("DOI") ? rawData["DOI"].AsString : docId, // Use DOI from raw_data, fallback to docId
+                title,
+                @abstract = abstractText,
+                openSummary, // Add openSummary field
+                fullTextContent,
+                embeddingVector = new float[768], // Placeholder, will be updated later
+                contextualContent,
+                journal,
+                publisher,
+                authors,
+                publishedAt = publishedAt ?? new DateTime(1, 1, 1), // Handle null values
+                publicationDateParts,
+                publicationHotScore = statDoc.Contains("publicationHotScore") && !statDoc["publicationHotScore"].IsBsonNull ? statDoc["publicationHotScore"].ToDouble() : 0.0,
+                publicationHotScore6m = statDoc.Contains("publicationHotScore_6m") && !statDoc["publicationHotScore_6m"].IsBsonNull ? statDoc["publicationHotScore_6m"].ToDouble() : 0.0,
+                pageRank = statDoc.Contains("pageRank") && !statDoc["pageRank"].IsBsonNull ? statDoc["pageRank"].ToDouble() : 0.0,
+                citationsCount = rawData.Contains("is-referenced-by-count") ? rawData["is-referenced-by-count"].AsInt32 : 0, // Add citationsCount field
+                voteScore = 0, // Add voteScore field (placeholder)
+                topics,
+            };
+
+            return (document, contextualContent);
+        }
+
+        private static string CleanTextContent(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return string.Empty;
+
+            // Remove JATS XML tags while preserving content
+            text = Regex.Replace(text, @"</?jats:[^>]*>", " ", RegexOptions.IgnoreCase);
+
+            // Remove other XML/HTML tags while preserving content
+            text = Regex.Replace(text, @"<[^>]*>", " ", RegexOptions.IgnoreCase);
+
+            // Decode HTML entities
+            text = System.Net.WebUtility.HtmlDecode(text);
+
+            // Normalize whitespace (replace multiple whitespace with single space)
+            text = Regex.Replace(text, @"\s+", " ");
+
+            // Clean up and trim
+            text = text.Trim();
+
+            // Remove the word "Abstract" from the beginning (case insensitive) - after all processing
+            text = Regex.Replace(text, @"^(abstract|summary)\s*", "", RegexOptions.IgnoreCase);
+
+            return text;
         }
     }
 }

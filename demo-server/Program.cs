@@ -66,6 +66,7 @@ builder.Services.AddScoped<IOpenSearchService, OpenSearchService>();
 builder.Services.AddScoped<IMongoDbService, MongoDbService>();
 builder.Services.AddScoped<IPapersService, PapersService>();
 builder.Services.AddScoped<IHealthService, HealthService>();
+builder.Services.AddHttpClient<ITogetherAIService, TogetherAIService>();
 
 var app = builder.Build();
 

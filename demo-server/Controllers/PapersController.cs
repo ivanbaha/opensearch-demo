@@ -83,7 +83,8 @@ namespace OpenSearchDemo.Controllers
         public async Task<IActionResult> ListPapers(
             [FromQuery] int page = 1,
             [FromQuery] int perPage = 10,
-            [FromQuery] string sort = "latest")
+            [FromQuery] string sort = "latest",
+            [FromQuery] bool? hasAbstract = null)
         {
             try
             {
@@ -98,7 +99,7 @@ namespace OpenSearchDemo.Controllers
                     sort = "latest";
                 }
 
-                var result = await _openSearchService.ListPapersAsync(page, perPage, sort);
+                var result = await _openSearchService.ListPapersAsync(page, perPage, sort, hasAbstract);
                 return Ok(result);
             }
             catch (Exception ex)
@@ -166,6 +167,50 @@ namespace OpenSearchDemo.Controllers
             {
                 _logger.LogError(ex, "Index refresh failed for: {IndexName}", indexName);
                 return Problem($"Index refresh error: {ex.Message}");
+            }
+        }
+
+        [HttpGet("search/contextual")]
+        public async Task<IActionResult> SearchPapersContextual(
+            [FromQuery] string query,
+            [FromQuery] int page = 1,
+            [FromQuery] int perPage = 10,
+            [FromQuery] string sort = "latest")
+        {
+            try
+            {
+                // Validate required query parameter
+                if (string.IsNullOrWhiteSpace(query))
+                {
+                    return BadRequest("Query parameter is required for contextual search");
+                }
+
+                // Validate pagination parameters
+                if (page < 1) page = 1;
+                if (perPage < 1 || perPage > 100) perPage = 10;
+
+                // Validate sort parameter - allow both list-style and search-style sorts
+                var validSorts = new[] { "hot", "top", "latest", "hotscore", "pagerank", "date", "citationscount", "votescore" };
+                if (!validSorts.Contains(sort.ToLower()))
+                {
+                    sort = "latest";
+                }
+
+                // Convert page/perPage to from/size for OpenSearch
+                var from = (page - 1) * perPage;
+                var size = perPage;
+
+                _logger.LogInformation("Performing contextual search with query: {Query}", query);
+
+                var result = await _openSearchService.SearchPapersContextualAsync(query, sort, from, size);
+
+                _logger.LogInformation("Contextual search completed for query: {Query}", query);
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Contextual search failed for query: {Query}", query);
+                return Problem($"Contextual search error: {ex.Message}");
             }
         }
     }

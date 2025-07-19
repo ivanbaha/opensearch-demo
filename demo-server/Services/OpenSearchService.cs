@@ -22,11 +22,36 @@ namespace OpenSearchDemo.Services
             },
             ""abstract"": { 
                 ""type"": ""text"",
-                ""analyzer"": ""standard""
+                ""analyzer"": ""standard"",
+                ""fields"": {
+                    ""keyword"": { ""type"": ""keyword"" }
+                }
             },
             ""openSummary"": { 
                 ""type"": ""text"",
                 ""analyzer"": ""standard""
+            },
+            ""fullTextContent"": { // For keyword-based fallbacks or hybrid search
+                ""type"": ""text"",
+                ""analyzer"": ""standard"",
+                ""store"": false
+            },
+            ""embeddingVector"": { // FOR SEMANTIC SEARCH
+                ""type"": ""knn_vector"",
+                ""dimension"": 768 // Match for 'M2-BERT-Retrieval-32k' model
+            },
+            ""contextualContent"": { // For contextual search
+                ""type"": ""text"",
+                ""analyzer"": ""standard"",
+                ""fields"": {
+                    ""english"": {
+                        ""type"": ""text"",
+                        ""analyzer"": ""english""
+                    },
+                    ""keyword"": {
+                        ""type"": ""keyword""
+                    }
+                }
             },
             ""journal"": { 
                 ""type"": ""text"",
@@ -78,15 +103,15 @@ namespace OpenSearchDemo.Services
                         ""refresh_interval"": ""-1""
                     }}
                 }},
-                ""aliases"": {{
-                    ""papers"": {{
-                        ""is_write_index"": true
-                    }}
-                }},
                 ""mappings"": {{
                     ""properties"": {IndexMappingProperties}
                 }}
             }}";
+            // ""aliases"": {{
+            //             ""papers"": {{
+            //                 ""is_write_index"": true
+            //             }}
+            //         }},
         }
 
         public OpenSearchService(IOpenSearchLowLevelClient client, ILogger<OpenSearchService> logger)
@@ -238,7 +263,7 @@ namespace OpenSearchDemo.Services
         {
             try
             {
-                var indexName = "papers_v1";
+                var indexName = "papers_v2";
                 var indexExistsResponse = await _client.Indices.ExistsAsync<StringResponse>(indexName);
 
                 if (indexExistsResponse.Success)
@@ -246,7 +271,7 @@ namespace OpenSearchDemo.Services
                     return new { message = "Papers index already exists", indexName };
                 }
 
-                _logger.LogInformation("Creating papers index");
+                _logger.LogInformation("Creating papers index: {indexName}", indexName);
 
                 var indexMapping = GetFullIndexMapping();
                 var createIndexResponse = await _client.Indices.CreateAsync<StringResponse>(indexName, PostData.String(indexMapping));
@@ -300,6 +325,10 @@ namespace OpenSearchDemo.Services
                     from,
                     size,
                     track_total_hits = true,
+                    _source = new
+                    {
+                        excludes = new[] { "embeddingVector", "contextualContent" }
+                    },
                     query = new
                     {
                         @bool = new
@@ -441,17 +470,89 @@ namespace OpenSearchDemo.Services
             }
         }
 
-        public async Task<object> ListPapersAsync(int page = 1, int perPage = 10, string sort = "latest")
+        public async Task<object> ListPapersAsync(int page = 1, int perPage = 10, string sort = "latest", bool? hasAbstract = null)
         {
             try
             {
                 _logger.LogInformation("Starting papers list operation");
 
-                var indexName = "papers";
+                var indexName = "papers_v2";
 
                 // Calculate pagination
                 var from = (page - 1) * perPage;
                 var size = perPage;
+
+                // Build filter clauses list
+                var filterClauses = new List<object>
+                {
+                    new
+                    {
+                        range = new Dictionary<string, object>
+                        {
+                            ["publishedAt"] = new { lte = DateTime.UtcNow.ToString("yyyy-MM-dd") }
+                        }
+                    }
+                };
+
+                // Add abstract filter if specified
+                if (hasAbstract.HasValue)
+                {
+                    if (hasAbstract.Value)
+                    {
+                        // Filter for papers that have a non-empty abstract using keyword field
+                        filterClauses.Add(new
+                        {
+                            @bool = new
+                            {
+                                must = new object[]
+                                {
+                                    new { exists = new { field = "abstract" } }
+                                },
+                                must_not = new object[]
+                                {
+                                    new
+                                    {
+                                        term = new Dictionary<string, object>
+                                        {
+                                            ["abstract.keyword"] = ""
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                    }
+                    else
+                    {
+                        // Filter for papers that have empty abstract using keyword field
+                        filterClauses.Add(new
+                        {
+                            @bool = new
+                            {
+                                should = new object[]
+                                {
+                                    new
+                                    {
+                                        @bool = new
+                                        {
+                                            must_not = new object[]
+                                            {
+                                                new { exists = new { field = "abstract" } }
+                                            }
+                                        }
+                                    },
+                                    new
+                                    {
+                                        term = new Dictionary<string, object>
+                                        {
+                                            ["abstract.keyword"] = ""
+                                        }
+                                    }
+                                },
+                                minimum_should_match = 1
+                            }
+                        });
+                    }
+                }
 
                 // Build search query
                 var searchQuery = new
@@ -459,6 +560,10 @@ namespace OpenSearchDemo.Services
                     from,
                     size,
                     track_total_hits = true,
+                    _source = new
+                    {
+                        excludes = new[] { "embeddingVector", "contextualContent" }
+                    },
                     query = new
                     {
                         @bool = new
@@ -467,16 +572,7 @@ namespace OpenSearchDemo.Services
                             {
                                 new { match_all = new { } }
                             },
-                            filter = new object[]
-                            {
-                                new
-                                {
-                                    range = new Dictionary<string, object>
-                                    {
-                                        ["publishedAt"] = new { lte = DateTime.UtcNow.ToString("yyyy-MM-dd") }
-                                    }
-                                }
-                            }
+                            filter = filterClauses.ToArray()
                         }
                     },
                     sort = new List<object>()
@@ -522,6 +618,7 @@ namespace OpenSearchDemo.Services
                 {
                     pagination = new { page, perPage, from, size },
                     sorting = sort,
+                    hasAbstractFilter = hasAbstract,
                     result = searchResult,
                     timestamp = DateTime.UtcNow
                 };
@@ -551,6 +648,10 @@ namespace OpenSearchDemo.Services
                     from,
                     size,
                     track_total_hits = true,
+                    _source = new
+                    {
+                        excludes = new[] { "embeddingVector", "contextualContent" }
+                    },
                     query = new
                     {
                         @bool = new
@@ -1375,6 +1476,119 @@ namespace OpenSearchDemo.Services
             catch (Exception ex)
             {
                 return new { error = ex.Message };
+            }
+        }
+
+        public async Task<object> SearchPapersContextualAsync(string query,
+            string? sortBy = null, int from = 0, int size = 10)
+        {
+            try
+            {
+                _logger.LogInformation("Starting contextual papers search operation");
+
+                var indexName = "papers";
+
+                // Build contextual search query using the contextualContent field
+                var searchQuery = new
+                {
+                    from,
+                    size,
+                    track_total_hits = true,
+                    _source = new
+                    {
+                        excludes = new[] { "embeddingVector", "contextualContent" }
+                    },
+                    query = new
+                    {
+                        multi_match = new
+                        {
+                            query,
+                            fields = new[] {
+                                "contextualContent^3",
+                                "contextualContent.english^2",
+                                "title^2",
+                                "abstract",
+                                "openSummary"
+                            },
+                            type = "best_fields",
+                            fuzziness = "AUTO",
+                            minimum_should_match = "75%"
+                        }
+                    },
+                    sort = new List<object>(),
+                    highlight = new
+                    {
+                        fields = new
+                        {
+                            contextualContent = new { fragment_size = 200, number_of_fragments = 2 },
+                            title = new { fragment_size = 100, number_of_fragments = 1 },
+                            @abstract = new { fragment_size = 300, number_of_fragments = 1 },
+                            openSummary = new { fragment_size = 200, number_of_fragments = 1 }
+                        },
+                        pre_tags = new[] { "<mark>" },
+                        post_tags = new[] { "</mark>" }
+                    }
+                };
+
+                var sortClauses = (List<object>)searchQuery.sort;
+
+                // Add sorting - map list-style sorts to search-style sorts
+                switch (sortBy?.ToLower())
+                {
+                    case "hot":
+                    case "hotscore":
+                        sortClauses.Add(new { publicationHotScore = new { order = "desc" } });
+                        break;
+                    case "top":
+                    case "pagerank":
+                        sortClauses.Add(new { pageRank = new { order = "desc" } });
+                        break;
+                    case "latest":
+                    case "date":
+                        sortClauses.Add(new { publishedAt = new { order = "desc" } });
+                        break;
+                    case "citationscount":
+                        sortClauses.Add(new { citationsCount = new { order = "desc" } });
+                        break;
+                    case "votescore":
+                        sortClauses.Add(new { voteScore = new { order = "desc" } });
+                        break;
+                    default:
+                        sortClauses.Add(new { _score = new { order = "desc" } });
+                        break;
+                }
+
+                var searchResponse = await _client.SearchAsync<StringResponse>(indexName, PostData.Serializable(searchQuery));
+
+                if (!searchResponse.Success)
+                {
+                    throw new Exception($"Contextual search failed: {searchResponse.Body}");
+                }
+
+                // Parse response
+                object? searchResult = null;
+                try
+                {
+                    searchResult = JsonSerializer.Deserialize<object>(searchResponse.Body);
+                }
+                catch (JsonException ex)
+                {
+                    _logger.LogWarning(ex, "Failed to parse contextual search response");
+                    searchResult = new { error = "Failed to parse response", raw = searchResponse.Body };
+                }
+
+                return new
+                {
+                    searchParameters = new { query, sortBy, from, size },
+                    searchType = "contextual",
+                    result = searchResult,
+                    timestamp = DateTime.UtcNow
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during contextual papers search operation");
+                throw;
             }
         }
     }

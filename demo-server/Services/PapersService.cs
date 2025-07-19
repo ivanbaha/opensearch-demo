@@ -11,16 +11,18 @@ namespace OpenSearchDemo.Services
         private readonly IMongoDbService _mongoDbService;
         private readonly ITogetherAIService _togetherAIService;
         private readonly ILogger<PapersService> _logger;
+        private readonly IConfiguration _configuration;
 
-        public PapersService(IOpenSearchService openSearchService, IMongoDbService mongoDbService, ITogetherAIService togetherAIService, ILogger<PapersService> logger)
+        public PapersService(IOpenSearchService openSearchService, IMongoDbService mongoDbService, ITogetherAIService togetherAIService, ILogger<PapersService> logger, IConfiguration configuration)
         {
             _openSearchService = openSearchService;
             _mongoDbService = mongoDbService;
             _togetherAIService = togetherAIService;
             _logger = logger;
+            _configuration = configuration;
         }
 
-        public async Task<object> SyncPapersAsync(int size = 1000)
+        public async Task<object> SyncPapersAsync(int size = 1000, string? lastId = null)
         {
             try
             {
@@ -30,14 +32,14 @@ namespace OpenSearchDemo.Services
                 // Ensure the papers index exists
                 await _openSearchService.CreatePapersIndexAsync();
 
-                // Get publication statistics documents with timing
+                // Get publication statistics documents with timing (using batch method with lastId support)
                 var mongoStartTime = DateTime.UtcNow;
-                var publicationStatsDocuments = await _mongoDbService.GetPublicationStatsAsync(size);
+                var publicationStatsDocuments = await _mongoDbService.GetPublicationStatsBatchAsync(size, lastId);
                 var mongoEndTime = DateTime.UtcNow;
                 var mongoRetrievalTime = mongoEndTime - mongoStartTime;
 
-                _logger.LogInformation("Retrieved {Count} documents from MongoDB in {Duration}ms",
-                    publicationStatsDocuments.Count, mongoRetrievalTime.TotalMilliseconds);
+                _logger.LogInformation("Retrieved {Count} documents from MongoDB in {Duration}ms (starting from lastId: {LastId})",
+                    publicationStatsDocuments.Count, mongoRetrievalTime.TotalMilliseconds, lastId ?? "beginning");
 
                 var documentsToIndex = new List<object>();
                 var processedCount = 0;
@@ -60,6 +62,7 @@ namespace OpenSearchDemo.Services
 
                 // Process all documents with bulk data and bulk embeddings
                 var documentMappings = new List<(BsonDocument statDoc, BsonDocument crossrefDoc, string docId, string contextualContent, int index)>();
+                string? newLastId = null; // Track the last processed ID
 
                 // First pass: Map documents without embeddings
                 foreach (var statDoc in publicationStatsDocuments)
@@ -67,6 +70,7 @@ namespace OpenSearchDemo.Services
                     try
                     {
                         var docId = statDoc["_id"].AsString;
+                        newLastId = docId; // Update lastId for each processed document
 
                         // Get corresponding crossref document from bulk result
                         if (!crossrefDocuments.TryGetValue(docId, out var crossrefDoc))
@@ -97,36 +101,53 @@ namespace OpenSearchDemo.Services
                     }
                 }
 
-                // Second pass: Generate embeddings in bulk
+                // Second pass: Generate embeddings in bulk (if enabled)
+                var generateEmbeddings = _configuration.GetValue<bool>("Sync:GenerateEmbeddings", true);
+
                 if (documentMappings.Count > 0)
                 {
-                    try
+                    if (generateEmbeddings)
                     {
-                        _logger.LogInformation("Generating {Count} embeddings in bulk for papers sync (will be processed in chunks)", documentMappings.Count);
-                        var contextualTexts = documentMappings.Select(m => m.contextualContent).ToArray();
-                        var embeddings = await _togetherAIService.GenerateBulkEmbeddingsAsync(contextualTexts);
-
-                        _logger.LogInformation("Successfully generated {Count} embeddings for papers sync", embeddings.Length);
-
-                        // Assign embeddings back to documents
-                        for (int i = 0; i < Math.Min(embeddings.Length, documentMappings.Count); i++)
+                        try
                         {
-                            var docIndex = documentMappings[i].index;
-                            var (statDoc, crossrefDoc, docId, _, index) = documentMappings[i];
-                            var embedding = embeddings[i];
+                            _logger.LogInformation("Generating {Count} embeddings in bulk for papers sync (will be processed in chunks)", documentMappings.Count);
+                            var contextualTexts = documentMappings.Select(m => m.contextualContent).ToArray();
+                            var embeddings = await _togetherAIService.GenerateBulkEmbeddingsAsync(contextualTexts);
 
-                            // Create new document with embedding instead of modifying existing one
-                            var newDocument = MapDocumentForOpenSearchWithEmbedding(statDoc, crossrefDoc, docId, embedding);
-                            documentsToIndex[index] = newDocument;
+                            _logger.LogInformation("Successfully generated {Count} embeddings for papers sync", embeddings.Length);
+
+                            // Assign embeddings back to documents
+                            for (int i = 0; i < Math.Min(embeddings.Length, documentMappings.Count); i++)
+                            {
+                                var docIndex = documentMappings[i].index;
+                                var (statDoc, crossrefDoc, docId, _, index) = documentMappings[i];
+                                var embedding = embeddings[i];
+
+                                // Create new document with embedding instead of modifying existing one
+                                var newDocument = MapDocumentForOpenSearchWithEmbedding(statDoc, crossrefDoc, docId, embedding);
+                                documentsToIndex[index] = newDocument;
+                            }
+
+                            _logger.LogInformation("Successfully assigned {Count} embeddings to documents", embeddings.Length);
                         }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed to generate bulk embeddings for papers sync, falling back to zero vectors");
 
-                        _logger.LogInformation("Successfully assigned {Count} embeddings to documents", embeddings.Length);
+                            // Fallback: assign zero vectors to all documents
+                            var zeroVector = new float[768];
+                            foreach (var (statDoc, crossrefDoc, docId, _, index) in documentMappings)
+                            {
+                                var newDocument = MapDocumentForOpenSearchWithEmbedding(statDoc, crossrefDoc, docId, zeroVector);
+                                documentsToIndex[index] = newDocument;
+                            }
+                        }
                     }
-                    catch (Exception ex)
+                    else
                     {
-                        _logger.LogWarning(ex, "Failed to generate bulk embeddings for papers sync, falling back to zero vectors");
+                        _logger.LogInformation("Embedding generation disabled, using zero vectors for {Count} documents", documentMappings.Count);
 
-                        // Fallback: assign zero vectors to all documents
+                        // Use zero vectors when embedding generation is disabled
                         var zeroVector = new float[768];
                         foreach (var (statDoc, crossrefDoc, docId, _, index) in documentMappings)
                         {
@@ -162,6 +183,7 @@ namespace OpenSearchDemo.Services
                     message = "Papers sync completed successfully",
                     indexName = "papers",
                     documentsProcessed = processedCount,
+                    lastId = newLastId, // Include the last processed ID for pagination
                     timing = new
                     {
                         mongoRetrievalTimeMs = mongoRetrievalTime.TotalMilliseconds,

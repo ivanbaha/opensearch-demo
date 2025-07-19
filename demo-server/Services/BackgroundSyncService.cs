@@ -121,16 +121,15 @@ public class BackgroundSyncService : BackgroundService
                 try
                 {
                     batchCount++;
-                    _logger.LogInformation("Processing batch {BatchCount}", batchCount);
-
-                    // Use the existing PapersService.SyncPapersAsync method with the configured batch size
+                    _logger.LogInformation("Processing batch {BatchCount}", batchCount);                    // Use the existing PapersService.SyncPapersAsync method with the configured batch size and lastId
                     var startTime = DateTime.UtcNow;
-                    var result = await papersService.SyncPapersAsync(_batchSize);
+                    var result = await papersService.SyncPapersAsync(_batchSize, stats.LastId);
                     var endTime = DateTime.UtcNow;
 
-                    // Extract documentsProcessed from the result
+                    // Extract documentsProcessed and lastId from the result
                     var resultType = result.GetType();
                     var documentsProcessedProp = resultType.GetProperty("documentsProcessed");
+                    var lastIdProp = resultType.GetProperty("lastId");
 
                     if (documentsProcessedProp?.GetValue(result) is int documentsProcessed)
                     {
@@ -143,8 +142,14 @@ public class BackgroundSyncService : BackgroundService
                         stats.TotalIndexed += documentsProcessed;
                         totalProcessedInSession += documentsProcessed;
 
-                        _logger.LogInformation("Batch {BatchCount} completed: {DocumentsProcessed} documents processed in {Duration}ms. Total session: {TotalSession}",
-                            batchCount, documentsProcessed, (endTime - startTime).TotalMilliseconds, totalProcessedInSession);
+                        // Update lastId if available
+                        if (lastIdProp?.GetValue(result) is string newLastId && !string.IsNullOrEmpty(newLastId))
+                        {
+                            stats.LastId = newLastId;
+                        }
+
+                        _logger.LogInformation("Batch {BatchCount} completed: {DocumentsProcessed} documents processed in {Duration}ms. Total session: {TotalSession}. LastId: {LastId}",
+                            batchCount, documentsProcessed, (endTime - startTime).TotalMilliseconds, totalProcessedInSession, stats.LastId ?? "none");
                     }
                     else
                     {

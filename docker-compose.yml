@@ -15,6 +15,8 @@ services:
       - cluster.routing.allocation.disk.watermark.low=95%
       - cluster.routing.allocation.disk.watermark.high=95%
       - cluster.routing.allocation.disk.watermark.flood_stage=95%
+      - knn.memory.circuit_breaker.enabled=true
+      - knn.memory.circuit_breaker.limit=80%
     env_file:
       - .opensearch.env
     ulimits:
@@ -53,6 +55,8 @@ services:
       - cluster.routing.allocation.disk.watermark.low=95%
       - cluster.routing.allocation.disk.watermark.high=95%
       - cluster.routing.allocation.disk.watermark.flood_stage=95%
+      - knn.memory.circuit_breaker.enabled=true
+      - knn.memory.circuit_breaker.limit=80%
     env_file:
       - .opensearch.env
     ulimits:
@@ -92,6 +96,8 @@ services:
       - cluster.routing.allocation.disk.watermark.low=95%
       - cluster.routing.allocation.disk.watermark.high=95%
       - cluster.routing.allocation.disk.watermark.flood_stage=95%
+      - knn.memory.circuit_breaker.enabled=true
+      - knn.memory.circuit_breaker.limit=80%
     env_file:
       - .opensearch.env
     ulimits:

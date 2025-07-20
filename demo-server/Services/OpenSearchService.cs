@@ -80,7 +80,16 @@ namespace OpenSearchDemo.Services
             },
             ""embeddingVector"": { // FOR SEMANTIC SEARCH
                 ""type"": ""knn_vector"",
-                ""dimension"": 768 // Match for 'M2-BERT-Retrieval-32k' model
+                ""dimension"": 768, // Match for 'M2-BERT-Retrieval-32k' model
+                ""method"": {
+                    ""name"": ""hnsw"",
+                    ""space_type"": ""cosinesimil"",
+                    ""engine"": ""lucene"",
+                    ""parameters"": {
+                        ""ef_construction"": 128, // Balanced value for performance and memory
+                        ""m"": 24 // Balanced value for performance and memory
+                    }
+                }
             },
             ""contextualContent"": { // For contextual search
                 ""type"": ""text"",
@@ -103,10 +112,10 @@ namespace OpenSearchDemo.Services
                     ""index"": {{
                         ""max_result_window"": 50000,
                         ""number_of_shards"": 30,
-                        ""number_of_replicas"": 0,
+                        ""number_of_replicas"": 1,
                         ""refresh_interval"": ""-1"",
                         ""knn"": true,
-                        ""knn.algo_param.ef_search"": 100
+                        ""knn.algo_param.ef_search"": 128
                     }}
                 }},
                 ""aliases"": {{
@@ -270,7 +279,7 @@ namespace OpenSearchDemo.Services
         {
             try
             {
-                var indexName = "papers_v2";
+                var indexName = "papers_v3";
                 var indexExistsResponse = await _client.Indices.ExistsAsync<StringResponse>(indexName);
 
                 if (indexExistsResponse.Success)
@@ -495,7 +504,7 @@ namespace OpenSearchDemo.Services
             {
                 _logger.LogInformation("Starting papers list operation");
 
-                var indexName = "papers_v2";
+                var indexName = "papers_v3";
 
                 // Calculate pagination
                 var from = (page - 1) * perPage;
@@ -1569,7 +1578,7 @@ namespace OpenSearchDemo.Services
             {
                 _logger.LogInformation("Starting semantic papers search operation with query: {Query}", query);
 
-                var indexName = "papers_v2";
+                var indexName = "papers_v3";
 
                 // Convert page/perPage to from/size for OpenSearch
                 var from = (page - 1) * perPage;

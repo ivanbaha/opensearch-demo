@@ -132,41 +132,40 @@ namespace OpenSearchDemo.Services
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogWarning(ex, "Failed to generate bulk embeddings for papers sync, falling back to zero vectors");
+                            _logger.LogWarning(ex, "Failed to generate bulk embeddings for papers sync, falling back to null vectors");
 
-                            // Fallback: assign zero vectors to all documents
-                            var zeroVector = new float[768];
+                            // Fallback: assign null to all documents
                             foreach (var (statDoc, crossrefDoc, docId, _, index) in documentMappings)
                             {
-                                var newDocument = MapDocumentForOpenSearchWithEmbedding(statDoc, crossrefDoc, docId, zeroVector);
+                                var newDocument = MapDocumentForOpenSearchWithEmbedding(statDoc, crossrefDoc, docId, null);
                                 documentsToIndex[index] = newDocument;
                             }
                         }
                     }
                     else
                     {
-                        _logger.LogInformation("Embedding generation disabled, using zero vectors for {Count} documents", documentMappings.Count);
+                        _logger.LogInformation("Embedding generation disabled, using null vectors for {Count} documents", documentMappings.Count);
 
-                        // Use zero vectors when embedding generation is disabled
-                        var zeroVector = new float[768];
+                        // Use null when embedding generation is disabled
                         foreach (var (statDoc, crossrefDoc, docId, _, index) in documentMappings)
                         {
-                            var newDocument = MapDocumentForOpenSearchWithEmbedding(statDoc, crossrefDoc, docId, zeroVector);
+                            var newDocument = MapDocumentForOpenSearchWithEmbedding(statDoc, crossrefDoc, docId, null);
                             documentsToIndex[index] = newDocument;
                         }
                     }
                 }
 
-                // Index all documents in batches
+                // Index all documents in batches, filtering out any null placeholders
                 var batchSize = 1000;
-                for (int i = 0; i < documentsToIndex.Count; i += batchSize)
+                var validDocuments = documentsToIndex.Where(d => d != null).ToList();
+                for (int i = 0; i < validDocuments.Count; i += batchSize)
                 {
-                    var batch = documentsToIndex.Skip(i).Take(batchSize).ToList();
-                    await _openSearchService.IndexDocumentsBatchAsync("papers_v2", batch);
+                    var batch = validDocuments.Skip(i).Take(batchSize).ToList();
+                    await _openSearchService.IndexDocumentsBatchAsync("papers_v3", batch);
                 }
-                if (documentsToIndex.Count > 0)
+                if (validDocuments.Count > 0)
                 {
-                    await _openSearchService.IndexDocumentsBatchAsync("papers_v2", documentsToIndex);
+                    await _openSearchService.IndexDocumentsBatchAsync("papers_v3", validDocuments);
                 }
 
                 var openSearchEndTime = DateTime.UtcNow;
@@ -351,7 +350,7 @@ namespace OpenSearchDemo.Services
             };
         }
 
-        private object MapDocumentForOpenSearchWithEmbedding(BsonDocument statDoc, BsonDocument crossrefDoc, string docId, float[] embeddingVector)
+        private object MapDocumentForOpenSearchWithEmbedding(BsonDocument statDoc, BsonDocument crossrefDoc, string docId, float[]? embeddingVector)
         {
             var rawData = crossrefDoc.Contains("raw_data") ? crossrefDoc["raw_data"].AsBsonDocument : new BsonDocument();
 

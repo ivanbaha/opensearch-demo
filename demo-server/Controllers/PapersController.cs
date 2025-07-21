@@ -4,7 +4,7 @@ using OpenSearchDemo.Services;
 namespace OpenSearchDemo.Controllers
 {
     [ApiController]
-    [Route("api/[controller]")]
+    [Route("api/papers")]
     public class PapersController : ControllerBase
     {
         private readonly IPapersService _papersService;
@@ -19,6 +19,7 @@ namespace OpenSearchDemo.Controllers
         }
 
         [HttpPost("sync")]
+        [ApiExplorerSettings(IgnoreApi = true)]
         public async Task<IActionResult> SyncPapers([FromQuery] int size = 1000)
         {
             try
@@ -30,20 +31,20 @@ namespace OpenSearchDemo.Controllers
                 var result = await _papersService.SyncPapersAsync(size);
 
                 // Refresh the papers index to make documents immediately searchable
-                // _logger.LogInformation("Syncing completed, refreshing papers index...");
-                // var refreshResult = await _openSearchService.RefreshIndexAsync("papers");
+                _logger.LogInformation("Syncing completed, refreshing papers index...");
+                var refreshResult = await _openSearchService.RefreshIndexAsync("papers");
 
                 // Log refresh result but don't fail the sync if refresh fails
-                // if (refreshResult is { } refreshObj &&
-                //     refreshObj.GetType().GetProperty("success")?.GetValue(refreshObj) is bool success &&
-                //     success)
-                // {
-                //     _logger.LogInformation("Papers index refreshed successfully after sync");
-                // }
-                // else
-                // {
-                //     _logger.LogWarning("Papers index refresh failed after sync, but sync completed successfully");
-                // }
+                if (refreshResult is { } refreshObj &&
+                    refreshObj.GetType().GetProperty("success")?.GetValue(refreshObj) is bool success &&
+                    success)
+                {
+                    _logger.LogInformation("Papers index refreshed successfully after sync");
+                }
+                else
+                {
+                    _logger.LogWarning("Papers index refresh failed after sync, but sync completed successfully");
+                }
 
                 return Ok(result);
             }

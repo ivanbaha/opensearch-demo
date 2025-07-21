@@ -150,131 +150,6 @@ namespace OpenSearchDemo.Services
             }
         }
 
-        public async Task<object> DemoAsync()
-        {
-            try
-            {
-                _logger.LogInformation("Starting OpenSearch demo operation");
-
-                var indexName = "demo-index";
-                var document = new { title = "Hello OpenSearch", content = "This is a test document." };
-
-                _logger.LogInformation("Attempting to index document to {IndexName}", indexName);
-
-                // Index a document
-                var indexResponse = await _client.IndexAsync<StringResponse>(indexName, PostData.Serializable(document));
-
-                _logger.LogInformation("Index response received. Success: {Success}, Status: {Status}, Body length: {BodyLength}",
-                    indexResponse.Success, indexResponse.HttpStatusCode, indexResponse.Body?.Length ?? 0);
-
-                // Check if indexing was successful
-                if (!indexResponse.Success)
-                {
-                    var errorMessage = $"Failed to index document. Status: {indexResponse.HttpStatusCode}. Response: {indexResponse.Body}";
-
-                    // Check for connection issues
-                    if (indexResponse.OriginalException != null)
-                    {
-                        errorMessage += $". Exception: {indexResponse.OriginalException.Message}";
-                        _logger.LogError(indexResponse.OriginalException, "Connection error while indexing");
-                    }
-
-                    throw new Exception(errorMessage);
-                }
-
-                _logger.LogInformation("Document indexed successfully, now searching...");
-
-                // Search for the document
-                var searchJson = @"{
-                    ""query"": {
-                        ""match"": {
-                            ""content"": ""test""
-                        }
-                    }
-                }";
-
-                var searchResponse = await _client.SearchAsync<StringResponse>(indexName, searchJson);
-
-                _logger.LogInformation("Search response received. Success: {Success}, Status: {Status}, Body length: {BodyLength}",
-                    searchResponse.Success, searchResponse.HttpStatusCode, searchResponse.Body?.Length ?? 0);
-
-                // Check if search was successful
-                if (!searchResponse.Success)
-                {
-                    var errorMessage = $"Failed to search documents. Status: {searchResponse.HttpStatusCode}. Response: {searchResponse.Body}";
-
-                    // Check for connection issues
-                    if (searchResponse.OriginalException != null)
-                    {
-                        errorMessage += $". Exception: {searchResponse.OriginalException.Message}";
-                        _logger.LogError(searchResponse.OriginalException, "Connection error while searching");
-                    }
-
-                    throw new Exception(errorMessage);
-                }
-
-                // Parse responses safely
-                object? indexResponseObj = null;
-                object? searchResponseObj = null;
-
-                try
-                {
-                    if (!string.IsNullOrEmpty(indexResponse.Body))
-                    {
-                        indexResponseObj = JsonSerializer.Deserialize<object>(indexResponse.Body);
-                    }
-                    else
-                    {
-                        indexResponseObj = new { message = "Empty response body" };
-                    }
-                }
-                catch (JsonException ex)
-                {
-                    _logger.LogWarning(ex, "Failed to parse index response as JSON");
-                    indexResponseObj = new { error = "Failed to parse index response", raw = indexResponse.Body, exception = ex.Message };
-                }
-
-                try
-                {
-                    if (!string.IsNullOrEmpty(searchResponse.Body))
-                    {
-                        searchResponseObj = JsonSerializer.Deserialize<object>(searchResponse.Body);
-                    }
-                    else
-                    {
-                        searchResponseObj = new { message = "Empty response body" };
-                    }
-                }
-                catch (JsonException ex)
-                {
-                    _logger.LogWarning(ex, "Failed to parse search response as JSON");
-                    searchResponseObj = new { error = "Failed to parse search response", raw = searchResponse.Body, exception = ex.Message };
-                }
-
-                var result = new
-                {
-                    IndexResponse = indexResponseObj,
-                    SearchResponse = searchResponseObj,
-                    Metadata = new
-                    {
-                        IndexSuccess = indexResponse.Success,
-                        SearchSuccess = searchResponse.Success,
-                        IndexHttpStatusCode = indexResponse.HttpStatusCode,
-                        SearchHttpStatusCode = searchResponse.HttpStatusCode,
-                        Timestamp = DateTime.UtcNow
-                    }
-                };
-
-                _logger.LogInformation("Demo operation completed successfully");
-                return result;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Unexpected error during demo operation");
-                throw;
-            }
-        }
-
         public async Task<object> CreatePapersIndexAsync()
         {
             try
@@ -504,7 +379,7 @@ namespace OpenSearchDemo.Services
             {
                 _logger.LogInformation("Starting papers list operation");
 
-                var indexName = "papers_v3";
+                var indexName = "papers";
 
                 // Calculate pagination
                 var from = (page - 1) * perPage;
@@ -1578,7 +1453,7 @@ namespace OpenSearchDemo.Services
             {
                 _logger.LogInformation("Starting semantic papers search operation with query: {Query}", query);
 
-                var indexName = "papers_v3";
+                var indexName = "papers";
 
                 // Convert page/perPage to from/size for OpenSearch
                 var from = (page - 1) * perPage;

@@ -28,23 +28,6 @@ namespace OpenSearchDemo.Services
             }
         }
 
-        public async Task<List<string>> GetCollectionNamesAsync()
-        {
-            try
-            {
-                _logger.LogInformation("Retrieving MongoDB collection names");
-                var collectionNames = await _database.ListCollectionNamesAsync();
-                var result = await collectionNames.ToListAsync();
-                _logger.LogInformation("Retrieved {Count} collection names", result.Count);
-                return result;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error retrieving collection names");
-                throw;
-            }
-        }
-
         public async Task<List<BsonDocument>> GetPublicationStatsAsync(int sampleSize = 100000)
         {
             try

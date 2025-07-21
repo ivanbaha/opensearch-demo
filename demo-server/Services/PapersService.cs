@@ -364,10 +364,10 @@ namespace OpenSearchDemo.Services
                     topics.Add(new
                     {
                         name = topicDoc.Contains("name") ? topicDoc["name"].AsString : "",
-                        relevanceScore = topicDoc.Contains("relevanceScore") && !topicDoc["relevanceScore"].IsBsonNull ? topicDoc["relevanceScore"].ToDouble() : 0.0,
-                        topScore = topicDoc.Contains("topScore") && !topicDoc["topScore"].IsBsonNull ? topicDoc["topScore"].ToDouble() : 0.0,
-                        hotScore = topicDoc.Contains("hotScore") && !topicDoc["hotScore"].IsBsonNull ? topicDoc["hotScore"].ToDouble() : 0.0,
-                        hotScore6m = topicDoc.Contains("hotScore_6m") && !topicDoc["hotScore_6m"].IsBsonNull ? topicDoc["hotScore_6m"].ToDouble() : 0.0,
+                        relevanceScore = SanitizeDouble(topicDoc.Contains("relevanceScore") && !topicDoc["relevanceScore"].IsBsonNull ? topicDoc["relevanceScore"].ToDouble() : 0.0),
+                        topScore = SanitizeDouble(topicDoc.Contains("topScore") && !topicDoc["topScore"].IsBsonNull ? topicDoc["topScore"].ToDouble() : 0.0),
+                        hotScore = SanitizeDouble(topicDoc.Contains("hotScore") && !topicDoc["hotScore"].IsBsonNull ? topicDoc["hotScore"].ToDouble() : 0.0),
+                        hotScore6m = SanitizeDouble(topicDoc.Contains("hotScore_6m") && !topicDoc["hotScore_6m"].IsBsonNull ? topicDoc["hotScore_6m"].ToDouble() : 0.0),
                     });
                 }
             }
@@ -477,9 +477,9 @@ namespace OpenSearchDemo.Services
                 authors,
                 publishedAt = publishedAt ?? new DateTime(1, 1, 1), // Handle null values
                 publicationDateParts,
-                publicationHotScore = statDoc.Contains("publicationHotScore") && !statDoc["publicationHotScore"].IsBsonNull ? statDoc["publicationHotScore"].ToDouble() : 0.0,
-                publicationHotScore6m = statDoc.Contains("publicationHotScore_6m") && !statDoc["publicationHotScore_6m"].IsBsonNull ? statDoc["publicationHotScore_6m"].ToDouble() : 0.0,
-                pageRank = statDoc.Contains("pageRank") && !statDoc["pageRank"].IsBsonNull ? statDoc["pageRank"].ToDouble() : 0.0,
+                publicationHotScore = SanitizeDouble(statDoc.Contains("publicationHotScore") && !statDoc["publicationHotScore"].IsBsonNull ? statDoc["publicationHotScore"].ToDouble() : 0.0),
+                publicationHotScore6m = SanitizeDouble(statDoc.Contains("publicationHotScore_6m") && !statDoc["publicationHotScore_6m"].IsBsonNull ? statDoc["publicationHotScore_6m"].ToDouble() : 0.0),
+                pageRank = SanitizeDouble(statDoc.Contains("pageRank") && !statDoc["pageRank"].IsBsonNull ? statDoc["pageRank"].ToDouble() : 0.0),
                 citationsCount = rawData.Contains("is-referenced-by-count") ? rawData["is-referenced-by-count"].AsInt32 : 0, // Add citationsCount field
                 voteScore = 0, // Add voteScore field (placeholder)
                 topics,
@@ -615,15 +615,24 @@ namespace OpenSearchDemo.Services
                 authors,
                 publishedAt = publishedAt ?? new DateTime(1, 1, 1), // Handle null values
                 publicationDateParts,
-                publicationHotScore = statDoc.Contains("publicationHotScore") && !statDoc["publicationHotScore"].IsBsonNull ? statDoc["publicationHotScore"].ToDouble() : 0.0,
-                publicationHotScore6m = statDoc.Contains("publicationHotScore_6m") && !statDoc["publicationHotScore_6m"].IsBsonNull ? statDoc["publicationHotScore_6m"].ToDouble() : 0.0,
-                pageRank = statDoc.Contains("pageRank") && !statDoc["pageRank"].IsBsonNull ? statDoc["pageRank"].ToDouble() : 0.0,
+                publicationHotScore = SanitizeDouble(statDoc.Contains("publicationHotScore") && !statDoc["publicationHotScore"].IsBsonNull ? statDoc["publicationHotScore"].ToDouble() : 0.0),
+                publicationHotScore6m = SanitizeDouble(statDoc.Contains("publicationHotScore_6m") && !statDoc["publicationHotScore_6m"].IsBsonNull ? statDoc["publicationHotScore_6m"].ToDouble() : 0.0),
+                pageRank = SanitizeDouble(statDoc.Contains("pageRank") && !statDoc["pageRank"].IsBsonNull ? statDoc["pageRank"].ToDouble() : 0.0),
                 citationsCount = rawData.Contains("is-referenced-by-count") ? rawData["is-referenced-by-count"].AsInt32 : 0, // Add citationsCount field
                 voteScore = 0, // Add voteScore field (placeholder)
                 topics,
             };
 
             return (document, contextualContent);
+        }
+
+        private static double SanitizeDouble(double value)
+        {
+            if (double.IsInfinity(value) || double.IsNaN(value))
+            {
+                return 0.0;
+            }
+            return value;
         }
 
         private static string CleanTextContent(string text)

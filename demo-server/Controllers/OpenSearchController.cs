@@ -16,22 +16,8 @@ namespace OpenSearchDemo.Controllers
             _logger = logger;
         }
 
-        [HttpPost("demo")]
-        public async Task<IActionResult> Demo()
-        {
-            try
-            {
-                var result = await _openSearchService.DemoAsync();
-                return Ok(result);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "OpenSearch demo failed");
-                return Problem($"Error: {ex.Message}");
-            }
-        }
-
         [HttpDelete("index/{indexName}")]
+        [ApiExplorerSettings(IgnoreApi = true)]
         public async Task<IActionResult> DeleteIndex(string indexName)
         {
             try

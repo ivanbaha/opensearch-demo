@@ -5,7 +5,6 @@ namespace OpenSearchDemo.Services
     public interface IOpenSearchService
     {
         Task<bool> IsHealthyAsync();
-        Task<object> DemoAsync();
         Task<object> CreatePapersIndexAsync();
         Task<object> SyncPapersAsync();
         Task<object> SearchPapersAsync(string? query = null, string? author = null, string? journal = null,

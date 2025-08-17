@@ -133,23 +133,30 @@ public class BackgroundSyncService : BackgroundService
 
                     if (documentsProcessedProp?.GetValue(result) is int documentsProcessed)
                     {
-                        if (documentsProcessed == 0)
-                        {
-                            _logger.LogInformation("No more documents to process. Sync completed.");
-                            break;
-                        }
+                        var newLastId = lastIdProp?.GetValue(result) as string;
 
-                        stats.TotalIndexed += documentsProcessed;
-                        totalProcessedInSession += documentsProcessed;
-
-                        // Update lastId if available
-                        if (lastIdProp?.GetValue(result) is string newLastId && !string.IsNullOrEmpty(newLastId))
+                        // Always update lastId if a new one is provided. This allows skipping empty batches.
+                        if (!string.IsNullOrEmpty(newLastId))
                         {
                             stats.LastId = newLastId;
                         }
 
+                        if (documentsProcessed > 0)
+                        {
+                            stats.TotalIndexed += documentsProcessed;
+                            totalProcessedInSession += documentsProcessed;
+                        }
+
                         _logger.LogInformation("Batch {BatchCount} completed: {DocumentsProcessed} documents processed in {Duration}ms. Total session: {TotalSession}. LastId: {LastId}",
                             batchCount, documentsProcessed, (endTime - startTime).TotalMilliseconds, totalProcessedInSession, stats.LastId ?? "none");
+
+                        // If no documents were processed AND we didn't get a new ID to continue from,
+                        // it means we've reached the end of the source data.
+                        if (documentsProcessed == 0 && string.IsNullOrEmpty(newLastId))
+                        {
+                            _logger.LogInformation("No more documents to process. Sync completed.");
+                            break;
+                        }
                     }
                     else
                     {

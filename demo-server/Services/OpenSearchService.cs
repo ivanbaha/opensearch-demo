@@ -218,7 +218,7 @@ namespace OpenSearchDemo.Services
                     track_total_hits = true,
                     _source = new
                     {
-                        excludes = new[] { "embeddingVector", "contextualContent" }
+                        excludes = new[] { "embeddingVector", "contextualContent", "fullTextContent" }
                     },
                     query = new
                     {
@@ -417,7 +417,7 @@ namespace OpenSearchDemo.Services
                     track_total_hits = true,
                     _source = new
                     {
-                        excludes = new[] { "embeddingVector", "contextualContent" }
+                        excludes = new[] { "embeddingVector", "contextualContent", "fullTextContent" }
                     },
                     query = new
                     {
@@ -505,7 +505,7 @@ namespace OpenSearchDemo.Services
                     track_total_hits = true,
                     _source = new
                     {
-                        excludes = new[] { "embeddingVector", "contextualContent" }
+                        excludes = new[] { "embeddingVector", "contextualContent", "fullTextContent" }
                     },
                     query = new
                     {
@@ -1351,7 +1351,7 @@ namespace OpenSearchDemo.Services
                     track_total_hits = true,
                     _source = new
                     {
-                        excludes = new[] { "embeddingVector", "contextualContent" }
+                        excludes = new[] { "embeddingVector", "contextualContent", "fullTextContent" }
                     },
                     query = new
                     {
@@ -1489,7 +1489,7 @@ namespace OpenSearchDemo.Services
                     track_total_hits = true,
                     _source = new
                     {
-                        excludes = new[] { "embeddingVector", "contextualContent" }
+                        excludes = new[] { "embeddingVector", "contextualContent", "fullTextContent" }
                     },
                     query = new
                     {

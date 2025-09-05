@@ -161,11 +161,11 @@ namespace OpenSearchDemo.Services
                 for (int i = 0; i < validDocuments.Count; i += batchSize)
                 {
                     var batch = validDocuments.Skip(i).Take(batchSize).ToList();
-                    await _openSearchService.IndexDocumentsBatchAsync("papers_v3", batch);
+                    await _openSearchService.IndexDocumentsBatchAsync("papers_test_v1", batch);
                 }
                 if (validDocuments.Count > 0)
                 {
-                    await _openSearchService.IndexDocumentsBatchAsync("papers_v3", validDocuments);
+                    await _openSearchService.IndexDocumentsBatchAsync("papers_test_v1", validDocuments);
                 }
 
                 var openSearchEndTime = DateTime.UtcNow;
@@ -270,9 +270,6 @@ namespace OpenSearchDemo.Services
             var contextualContent = string.Join(" ", new[] { title, abstractText, openSummary }
                 .Where(s => !string.IsNullOrWhiteSpace(s)));
 
-            // Create full text content for search (same as contextual content for now)
-            var fullTextContent = contextualContent;
-
             // Generate embedding for the contextual content
             float[] embeddingVector;
             try
@@ -333,7 +330,6 @@ namespace OpenSearchDemo.Services
                 title,
                 @abstract = abstractText,
                 openSummary, // Add openSummary field
-                fullTextContent,
                 embeddingVector,
                 contextualContent,
                 journal,
@@ -420,7 +416,6 @@ namespace OpenSearchDemo.Services
                 .Where(s => !string.IsNullOrWhiteSpace(s)));
 
             // Create full text content for search (same as contextual content for now)
-            var fullTextContent = contextualContent;
 
             // Extract journal
             var journal = "";
@@ -469,7 +464,6 @@ namespace OpenSearchDemo.Services
                 title,
                 @abstract = abstractText,
                 openSummary, // Add openSummary field
-                fullTextContent,
                 embeddingVector, // Use the provided embedding
                 contextualContent,
                 journal,
@@ -558,7 +552,6 @@ namespace OpenSearchDemo.Services
                 .Where(s => !string.IsNullOrWhiteSpace(s)));
 
             // Create full text content for search (same as contextual content for now)
-            var fullTextContent = contextualContent;
 
             // Extract journal
             var journal = "";
@@ -607,7 +600,6 @@ namespace OpenSearchDemo.Services
                 title,
                 @abstract = abstractText,
                 openSummary, // Add openSummary field
-                fullTextContent,
                 embeddingVector = new float[768], // Placeholder, will be updated later
                 contextualContent,
                 journal,

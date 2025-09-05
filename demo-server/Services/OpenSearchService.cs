@@ -1,5 +1,6 @@
 using OpenSearch.Net;
 using System.Text.Json;
+using OpenSearchDemo.Configuration;
 
 namespace OpenSearchDemo.Services
 {
@@ -9,124 +10,14 @@ namespace OpenSearchDemo.Services
         private readonly ITogetherAIService _togetherAIService;
         private readonly ILogger<OpenSearchService> _logger;
 
-        // Centralized mapping definition (copied from sync-console)
-        private static readonly string IndexMappingProperties = @"{
-            ""id"": { ""type"": ""keyword"" },
-            ""oipubId"": { ""type"": ""keyword"" },
-            ""doi"": { ""type"": ""keyword"" },
-            ""title"": { 
-                ""type"": ""text"",
-                ""analyzer"": ""standard"",
-                ""fields"": {
-                    ""keyword"": { ""type"": ""keyword"" }
-                }
-            },
-            ""abstract"": { 
-                ""type"": ""text"",
-                ""analyzer"": ""standard""
-            },
-            ""openSummary"": { 
-                ""type"": ""text"",
-                ""analyzer"": ""standard""
-            },
-            ""journal"": { 
-                ""type"": ""text"",
-                ""fields"": {
-                    ""keyword"": { ""type"": ""keyword"" }
-                }
-            },
-            ""publisher"": { 
-                ""type"": ""text"",
-                ""fields"": {
-                    ""keyword"": { ""type"": ""keyword"" }
-                }
-            },
-            ""authors"": { 
-                ""type"": ""nested"",
-                ""properties"": {
-                    ""name"": { ""type"": ""keyword"" },
-                    ""ORCID"": { ""type"": ""keyword"" },
-                    ""sequence"": { ""type"": ""keyword"" }
-                }
-            },
-            ""publicationDateParts"": { ""type"": ""integer"" },
-            ""publicationHotScore"": { ""type"": ""double"", ""null_value"": 0.0 },
-            ""publicationHotScore6m"": { ""type"": ""double"", ""null_value"": 0.0 },
-            ""pageRank"": { ""type"": ""double"", ""null_value"": 0.0 },
-            ""citationsCount"": { ""type"": ""integer"", ""null_value"": 0.0 },
-            ""voteScore"": { ""type"": ""integer"", ""null_value"": 0.0 },
-            ""topics"": {
-                ""type"": ""nested"",
-                ""properties"": {
-                    ""name"": { ""type"": ""keyword"" },
-                    ""relevanceScore"": { ""type"": ""double"", ""null_value"": 0.0 },
-                    ""topScore"": { ""type"": ""double"", ""null_value"": 0.0 },
-                    ""hotScore"": { ""type"": ""double"", ""null_value"": 0.0 },
-                    ""hotScore6m"": { ""type"": ""double"", ""null_value"": 0.0 }
-                }
-            },
-            // ---------SYSTEM FIELDS---------------
-            ""hasAbstract"": {
-                ""type"": ""boolean""
-            },
-            ""hasOpenSummary"": {
-                ""type"": ""boolean""
-            },
-            ""publishedAt"": { ""type"": ""date"", ""null_value"": ""0001-01-01T00:00:00Z"" },
-            ""fullTextContent"": { // For keyword-based fallbacks or hybrid search
-                ""type"": ""text"",
-                ""analyzer"": ""standard"",
-                ""store"": false
-            },
-            ""embeddingVector"": { // FOR SEMANTIC SEARCH
-                ""type"": ""knn_vector"",
-                ""dimension"": 768, // Match for 'M2-BERT-Retrieval-32k' model
-                ""method"": {
-                    ""name"": ""hnsw"",
-                    ""space_type"": ""cosinesimil"",
-                    ""engine"": ""lucene"",
-                    ""parameters"": {
-                        ""ef_construction"": 128, // Balanced value for performance and memory
-                        ""m"": 24 // Balanced value for performance and memory
-                    }
-                }
-            },
-            ""contextualContent"": { // For contextual search
-                ""type"": ""text"",
-                ""analyzer"": ""standard"",
-                ""fields"": {
-                    ""english"": {
-                        ""type"": ""text"",
-                        ""analyzer"": ""english""
-                    },
-                    ""keyword"": {
-                        ""type"": ""keyword""
-                    }
-                }
-            }
-        }";
-        private static string GetFullIndexMapping()
+        /// <summary>
+        /// Gets the full index configuration using the centralized configuration class
+        /// </summary>
+        /// <param name="aliasName">Optional alias name (defaults to 'papers')</param>
+        /// <returns>Complete index configuration as JSON string</returns>
+        private static string GetFullIndexMapping(string aliasName = OpenSearchIndexConfiguration.DefaultAliasName)
         {
-            return $@"{{
-                ""settings"": {{
-                    ""index"": {{
-                        ""max_result_window"": 50000,
-                        ""number_of_shards"": 30,
-                        ""number_of_replicas"": 1,
-                        ""refresh_interval"": ""-1"",
-                        ""knn"": true,
-                        ""knn.algo_param.ef_search"": 128
-                    }}
-                }},
-                ""aliases"": {{
-                            ""papers"": {{
-                                ""is_write_index"": true
-                            }}
-                        }},
-                ""mappings"": {{
-                    ""properties"": {IndexMappingProperties}
-                }}
-            }}";
+            return OpenSearchIndexConfiguration.GetFullIndexConfiguration(aliasName);
         }
 
         public OpenSearchService(IOpenSearchLowLevelClient client, ITogetherAIService togetherAIService, ILogger<OpenSearchService> logger)
@@ -154,7 +45,7 @@ namespace OpenSearchDemo.Services
         {
             try
             {
-                var indexName = "papers_v3";
+                var indexName = OpenSearchIndexConfiguration.DefaultIndexName;
                 var indexExistsResponse = await _client.Indices.ExistsAsync<StringResponse>(indexName);
 
                 if (indexExistsResponse.Success)
@@ -207,7 +98,7 @@ namespace OpenSearchDemo.Services
             {
                 _logger.LogInformation("Starting papers search operation");
 
-                var indexName = "papers";
+                var indexName = OpenSearchIndexConfiguration.DefaultAliasName;
                 var topicsArray = !string.IsNullOrEmpty(topics) ? topics.Split(',', StringSplitOptions.RemoveEmptyEntries) : null;
 
                 // Build search query
@@ -218,7 +109,7 @@ namespace OpenSearchDemo.Services
                     track_total_hits = true,
                     _source = new
                     {
-                        excludes = new[] { "embeddingVector", "contextualContent", "fullTextContent" }
+                        excludes = new[] { "embeddingVector", "contextualContent" }
                     },
                     query = new
                     {
@@ -379,7 +270,7 @@ namespace OpenSearchDemo.Services
             {
                 _logger.LogInformation("Starting papers list operation");
 
-                var indexName = "papers";
+                var indexName = OpenSearchIndexConfiguration.DefaultAliasName;
 
                 // Calculate pagination
                 var from = (page - 1) * perPage;
@@ -417,7 +308,7 @@ namespace OpenSearchDemo.Services
                     track_total_hits = true,
                     _source = new
                     {
-                        excludes = new[] { "embeddingVector", "contextualContent", "fullTextContent" }
+                        excludes = new[] { "embeddingVector", "contextualContent" }
                     },
                     query = new
                     {
@@ -491,7 +382,7 @@ namespace OpenSearchDemo.Services
             {
                 _logger.LogInformation("Starting papers by topic list operation for topic: {TopicName}", topicName);
 
-                var indexName = "papers";
+                var indexName = OpenSearchIndexConfiguration.DefaultAliasName;
 
                 // Calculate pagination
                 var from = (page - 1) * perPage;
@@ -505,7 +396,7 @@ namespace OpenSearchDemo.Services
                     track_total_hits = true,
                     _source = new
                     {
-                        excludes = new[] { "embeddingVector", "contextualContent", "fullTextContent" }
+                        excludes = new[] { "embeddingVector", "contextualContent" }
                     },
                     query = new
                     {
@@ -1034,7 +925,7 @@ namespace OpenSearchDemo.Services
             }
         }
 
-        public async Task<object> CheckDuplicatesAsync(string indexName = "papers")
+        public async Task<object> CheckDuplicatesAsync(string indexName = OpenSearchIndexConfiguration.DefaultAliasName)
         {
             try
             {
@@ -1153,7 +1044,7 @@ namespace OpenSearchDemo.Services
             }
         }
 
-        public async Task<object> CheckDataDistributionAsync(string indexName = "papers")
+        public async Task<object> CheckDataDistributionAsync(string indexName = OpenSearchIndexConfiguration.DefaultAliasName)
         {
             try
             {
@@ -1341,7 +1232,7 @@ namespace OpenSearchDemo.Services
             {
                 _logger.LogInformation("Starting contextual papers search operation");
 
-                var indexName = "papers";
+                var indexName = OpenSearchIndexConfiguration.DefaultAliasName;
 
                 // Build contextual search query using the contextualContent field
                 var searchQuery = new
@@ -1351,7 +1242,7 @@ namespace OpenSearchDemo.Services
                     track_total_hits = true,
                     _source = new
                     {
-                        excludes = new[] { "embeddingVector", "contextualContent", "fullTextContent" }
+                        excludes = new[] { "embeddingVector", "contextualContent" }
                     },
                     query = new
                     {
@@ -1413,11 +1304,17 @@ namespace OpenSearchDemo.Services
                         break;
                 }
 
+                // Log the query for debugging
+                var queryJson = JsonSerializer.Serialize(searchQuery, new JsonSerializerOptions { WriteIndented = true });
+                _logger.LogInformation("Contextual search query for index {IndexName}: {Query}", indexName, queryJson);
+
                 var searchResponse = await _client.SearchAsync<StringResponse>(indexName, PostData.Serializable(searchQuery));
 
                 if (!searchResponse.Success)
                 {
-                    throw new Exception($"Contextual search failed: {searchResponse.Body}");
+                    _logger.LogError("Contextual search failed. Status: {StatusCode}, Body: {Body}",
+                        searchResponse.HttpStatusCode, searchResponse.Body);
+                    throw new Exception($"Contextual search failed: Status {searchResponse.HttpStatusCode}, Body: {searchResponse.Body}");
                 }
 
                 // Parse response
@@ -1473,7 +1370,7 @@ namespace OpenSearchDemo.Services
                     return await SearchPapersContextualAsync(query, sort, from, size);
                 }
 
-                const int EXPECTED_DIMENSION = 768; // Match the model and mapping
+                const int EXPECTED_DIMENSION = OpenSearchIndexConfiguration.EmbeddingDimension; // Match the model and mapping
                 if (queryEmbedding == null || queryEmbedding.Length != EXPECTED_DIMENSION)
                 {
                     _logger.LogWarning("Invalid embedding generated for query '{Query}' (expected {ExpectedDim}D, got {ActualDim}D). Falling back to contextual search.",
@@ -1489,7 +1386,7 @@ namespace OpenSearchDemo.Services
                     track_total_hits = true,
                     _source = new
                     {
-                        excludes = new[] { "embeddingVector", "contextualContent", "fullTextContent" }
+                        excludes = new[] { "embeddingVector", "contextualContent" }
                     },
                     query = new
                     {
